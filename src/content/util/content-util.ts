@@ -1,18 +1,18 @@
-import {ContentData, HierarchyInfo} from '../def/content';
-import {ContentDisposition, ContentEncoding, ContentStatus, State, Visibility} from './content-constants';
-import {ChildContent} from '../def/response';
+import {ContentData, HierarchyInfo, TrackingEnabled} from '../def/content';
+import {ContentDisposition, ContentEncoding, ContentStatus, MimeType, State, Visibility} from './content-constants';
 import {Rollup} from '../../telemetry';
 import {AppConfig} from '../../api/config/app-config';
 import {ContentEntry} from '../db/schema';
 import {NumberUtil} from '../../util/number-util';
-import COLUMN_NAME_IDENTIFIER = ContentEntry.COLUMN_NAME_IDENTIFIER;
-import COLUMN_NAME_CONTENT_STATE = ContentEntry.COLUMN_NAME_CONTENT_STATE;
-import COLUMN_NAME_LOCAL_DATA = ContentEntry.COLUMN_NAME_LOCAL_DATA;
-import COLUMN_NAME_VISIBILITY = ContentEntry.COLUMN_NAME_VISIBILITY;
+import {ArrayUtil} from '../../util/array-util';
+import * as dayjs from 'dayjs';
+import {ChildContent} from '..';
+import {CsPrimaryCategoryMapper} from '@project-sunbird/client-services/services/content/utilities/primary-category-mapper';
+import { CsContentType } from '@project-sunbird/client-services/services/content';
 
 export class ContentUtil {
-    private static DEFAULT_PACKAGE_VERSION = -1;
     public static defaultCompatibilityLevel = 1;
+    private static DEFAULT_PACKAGE_VERSION = -1;
     private static INITIAL_VALUE_FOR_TRANSFER_COUNT = 0;
     private static readonly MAX_CONTENT_NAME = 30;
 
@@ -116,8 +116,8 @@ export class ContentUtil {
     }
 
     public static readCompatibilityLevel(contentData: any): number {
-        const compaitibilityLevel = contentData.compatibilityLevel;
-        return compaitibilityLevel ? compaitibilityLevel : this.defaultCompatibilityLevel;
+        const compatibilityLevel = contentData.compatibilityLevel;
+        return compatibilityLevel ? compatibilityLevel : this.defaultCompatibilityLevel;
     }
 
     public static isDraftContent(status): boolean {
@@ -157,7 +157,6 @@ export class ContentUtil {
                 this.readPkgVersion(contentData);
         }
 
-
         return isExist;
     }
 
@@ -172,6 +171,29 @@ export class ContentUtil {
         }
         return contentType;
     }
+
+    public static readPrimaryCategory(contentData): string {
+        let primaryCategory: string = contentData.primaryCategory;
+        if (primaryCategory) {
+            primaryCategory = primaryCategory.toLowerCase();
+        } else {
+            primaryCategory = CsPrimaryCategoryMapper.getPrimaryCategory(
+              contentData.contentType.toLowerCase(), contentData.mimeType, contentData.resourceType).toLowerCase();
+        }
+        return primaryCategory;
+    }
+
+    public static readPrimaryCategoryServer(contentData): string {
+        let primaryCategory: string = contentData.primaryCategory;
+        if (primaryCategory) {
+            primaryCategory = primaryCategory;
+        } else {
+            primaryCategory = CsPrimaryCategoryMapper.getPrimaryCategory(
+              contentData.contentType.toLowerCase(), contentData.mimeType, contentData.resourceType);
+        }
+        return primaryCategory;
+    }
+
 
     public static readAudience(contentData): string {
         const audience = contentData.audience;
@@ -199,8 +221,10 @@ export class ContentUtil {
     /**
      * To Check whether the content is exist or not.
      *
-     * @param oldContent    Old ContentModel
+     * @param existingContentInDB    Old ContentModel
      * @param newIdentifier New content identifier
+     * @param newPkgVersion
+     * @param keepLowerVersion
      * @return True - if file exists, False- does not exists
      */
     public static doesContentExist(existingContentInDB: ContentEntry.SchemaMap | undefined, newIdentifier: string,
@@ -220,7 +244,7 @@ export class ContentUtil {
                 } else {
                     overrideDB = true;
                 }
-            } else  if (ContentUtil.readPkgVersion(contentData) < newPkgVersion) {
+            } else if (ContentUtil.readPkgVersion(contentData) < newPkgVersion) {
                 overrideDB = true;
             }
 
@@ -228,34 +252,19 @@ export class ContentUtil {
                 // If old content's pkgVersion is less than the new content then return false.
                 //                        && ((readPkgVersion(existingContentInDB.getLocalData()) < newPkgVersion)
                 //  If content_state is other than artifact available then also return  false.
-                || (!keepLowerVersion && existingContentInDB[COLUMN_NAME_CONTENT_STATE] !== State.ARTIFACT_AVAILABLE.valueOf())) {
+                || (!keepLowerVersion
+                    && existingContentInDB[ContentEntry.COLUMN_NAME_CONTENT_STATE] !== State.ARTIFACT_AVAILABLE.valueOf())) {
                 doestExist = false;
             } else {
                 doestExist = true;
             }
         }
 
-
         return doestExist;
     }
 
     public static getContentRootDir(rootFilePath: string): string {
         return rootFilePath.concat('content');
-    }
-
-    private static transferCount(viralityMetadata): number {
-        const transferCount = viralityMetadata['transferCount'];
-        return parseInt(transferCount, 0);
-
-    }
-
-    private static isContentMetadataAbsent(localDataMap): boolean {
-        return !Boolean(localDataMap['contentMetaData']);
-    }
-
-
-    private static isContentMetadataPresentWithoutViralityMetadata(localData): boolean {
-        return !Boolean((localData['contentMetaData'])['virality']);
     }
 
     public static addOrUpdateViralityMetadata(localData, origin: string) {
@@ -351,7 +360,7 @@ export class ContentUtil {
         });
     }
 
-    public static getExportedFileName(contentsInDb: ContentEntry.SchemaMap[]) {
+    public static getExportedFileName(contentsInDb: ContentEntry.SchemaMap[], appName: string) {
         let fileName = 'blank.ecar';
         let firstContent: ContentEntry.SchemaMap;
         let rootContents = 0;
@@ -362,7 +371,7 @@ export class ContentUtil {
 
         const appendName = '';
         contentsInDb.forEach((contentInDb) => {
-            if (Visibility.DEFAULT.valueOf() === contentInDb[COLUMN_NAME_VISIBILITY]) {
+            if (Visibility.DEFAULT.valueOf() === contentInDb[ContentEntry.COLUMN_NAME_VISIBILITY]) {
                 rootContents++;
             }
         });
@@ -372,14 +381,14 @@ export class ContentUtil {
         }
 
         if (firstContent!) {
-            const localData = JSON.parse(firstContent![COLUMN_NAME_LOCAL_DATA]);
+            const localData = JSON.parse(firstContent![ContentEntry.COLUMN_NAME_LOCAL_DATA]);
             let name = localData.name;
             if (name && name.length > ContentUtil.MAX_CONTENT_NAME) {
                 name = name.substring(0, ContentUtil.MAX_CONTENT_NAME - 3) + '...';
             }
 
             const pkgVersion = localData.pkgVersion;
-            fileName = `${name}-v${pkgVersion}${appendName}.ecar`;
+            fileName = `${appName.toLowerCase()}_${name}-v${pkgVersion}${appendName}.ecar`;
         }
 
         return fileName;
@@ -462,6 +471,159 @@ export class ContentUtil {
             refCount = 0;
         }
         return refCount;
+    }
+
+    public static isNotUnit(mimeType, visibility): boolean {
+        return !(MimeType.COLLECTION.valueOf() === mimeType && Visibility.PARENT.valueOf() === visibility);
+    }
+
+    public static getContentAttribute(data): string {
+        let value: string[] = [];
+        if (data) {
+            if (typeof data === 'string') {
+                value.push(data);
+            } else {
+                value = data;
+            }
+            if (value && value.length) {
+                value.sort();
+                let attribute = '';
+                for (let i = 0; i < value.length; i++) {
+                    if (i < value.length - 1) {
+                        attribute = attribute.concat('~', value[i]);
+                    } else {
+                        attribute = attribute.concat('~', value[i], '~');
+                    }
+                }
+                return attribute.toLowerCase().trim();
+            }
+        }
+        return '';
+    }
+
+    public static getFindAllContentsWithIdentifierQuery(identifiers: string[]): string {
+        const identifiersStr = ArrayUtil.joinPreservingQuotes(identifiers);
+        const orderBy = ` order by ${ContentEntry.COLUMN_NAME_LOCAL_LAST_UPDATED_ON} desc, ${ContentEntry.COLUMN_NAME_SERVER_LAST_UPDATED_ON} desc`;
+        const filter = ` where ${ContentEntry.COLUMN_NAME_IDENTIFIER} in (${identifiersStr}) AND ${ContentEntry.COLUMN_NAME_REF_COUNT} > 0`;
+        return `select * from ${ContentEntry.TABLE_NAME} ${filter} ${orderBy}`;
+    }
+
+    public static getFindAllContentsQuery(): string {
+        return `select * from ${ContentEntry.TABLE_NAME} where ${ContentEntry.COLUMN_NAME_REF_COUNT} > 0`;
+    }
+
+    public static constructContentDBModel(identifier, manifestVersion, localData, mimeType, contentType, visibility, path, refCount,
+        contentState, audience, pragma, sizeOnDevice, board, medium, grade, primaryCategory): ContentEntry.SchemaMap {
+        return {
+            [ContentEntry.COLUMN_NAME_IDENTIFIER]: identifier,
+            [ContentEntry.COLUMN_NAME_SERVER_DATA]: '',
+            [ContentEntry.COLUMN_NAME_PATH]: ContentUtil.getBasePath(path),
+            [ContentEntry.COLUMN_NAME_REF_COUNT]: refCount,
+            [ContentEntry.COLUMN_NAME_CONTENT_STATE]: contentState,
+            [ContentEntry.COLUMN_NAME_SIZE_ON_DEVICE]: sizeOnDevice,
+            [ContentEntry.COLUMN_NAME_MANIFEST_VERSION]: manifestVersion,
+            [ContentEntry.COLUMN_NAME_LOCAL_DATA]: localData,
+            [ContentEntry.COLUMN_NAME_MIME_TYPE]: mimeType,
+            [ContentEntry.COLUMN_NAME_CONTENT_TYPE]: contentType,
+            [ContentEntry.COLUMN_NAME_VISIBILITY]: visibility,
+            [ContentEntry.COLUMN_NAME_AUDIENCE]: audience,
+            [ContentEntry.COLUMN_NAME_PRAGMA]: pragma,
+            [ContentEntry.COLUMN_NAME_LOCAL_LAST_UPDATED_ON]: dayjs().format(),
+            [ContentEntry.COLUMN_NAME_BOARD]: ContentUtil.getContentAttribute(board),
+            [ContentEntry.COLUMN_NAME_MEDIUM]: ContentUtil.getContentAttribute(medium),
+            [ContentEntry.COLUMN_NAME_GRADE]: ContentUtil.getContentAttribute(grade),
+            [ContentEntry.COLUMN_NAME_PRIMARY_CATEGORY]: primaryCategory
+        };
+    }
+
+    public static getReferenceCount(existingContent, visibility: string): number {
+        let refCount: number;
+        if (existingContent) {
+            refCount = existingContent[ContentEntry.COLUMN_NAME_REF_COUNT];
+
+            // if the content has a 'Default' visibility and update the same content then don't increase the reference count...
+            if (!(Visibility.DEFAULT.valueOf() === existingContent[ContentEntry.COLUMN_NAME_VISIBILITY]
+                && Visibility.DEFAULT.valueOf() === visibility)) {
+                refCount = refCount + 1;
+            }
+        } else {
+            refCount = 1;
+        }
+        return refCount;
+    }
+
+    /**
+     * add or update the reference count for the content
+     *
+     */
+    public static getContentVisibility(existingContentInDb, objectType, previuosVisibility: string): string {
+        let visibility;
+        if ('Library' === objectType) {
+            visibility = Visibility.PARENT.valueOf();
+        } else if (existingContentInDb) {
+            if (!Visibility.PARENT.valueOf() === existingContentInDb[ContentEntry.COLUMN_NAME_VISIBILITY]) {
+                // If not started from child content then do not shrink visibility.
+                visibility = existingContentInDb[ContentEntry.COLUMN_NAME_VISIBILITY];
+            }
+        }
+        return visibility ? visibility : previuosVisibility;
+    }
+
+    /**
+     * Add or update the content_state. contentState should not update the spine_only when importing the spine content
+     * after importing content with artifacts.
+     *
+     */
+    public static getContentState(existingContentInDb, contentState: number): number {
+        if (existingContentInDb && existingContentInDb[ContentEntry.COLUMN_NAME_CONTENT_STATE] > contentState) {
+            contentState = existingContentInDb[ContentEntry.COLUMN_NAME_CONTENT_STATE];
+        }
+        return contentState;
+    }
+
+    public static isFreeSpaceAvailable(deviceAvailableFreeSpace: number, fileSpace: number, bufferSize: number) {
+        let BUFFER_SIZE = 1024 * 10;
+        if (bufferSize > 0) {
+            BUFFER_SIZE = bufferSize;
+        }
+        return deviceAvailableFreeSpace > 0 && deviceAvailableFreeSpace > (fileSpace + BUFFER_SIZE);
+    }
+
+    private static transferCount(viralityMetadata): number {
+        const transferCount = viralityMetadata['transferCount'];
+        return parseInt(transferCount, 0);
+
+    }
+
+    private static isContentMetadataAbsent(localDataMap): boolean {
+        return !Boolean(localDataMap['contentMetaData']);
+    }
+
+    private static isContentMetadataPresentWithoutViralityMetadata(localData): boolean {
+        return !Boolean((localData['contentMetaData'])['virality']);
+    }
+
+    public static isTrackable(content): number {
+        if (content.trackable && typeof (content.trackable) === 'string') {
+            content.trackable = JSON.parse(content.trackable);
+        }
+        if (content.trackable && content.trackable.enabled) {
+            if (content.trackable.enabled === TrackingEnabled.YES) {
+                return 1;
+            } else if (content.mimeType === MimeType.COLLECTION) {
+                return 0;
+            } else {
+                return -1;
+            }
+        } else {
+            if (content.contentType.toLowerCase() === CsContentType.COURSE.toLowerCase()) {
+                return 1;
+            } else if (content.mimeType === MimeType.COLLECTION) {
+                return 0;
+            } else {
+                return -1;
+            }
+        }
     }
 
 }

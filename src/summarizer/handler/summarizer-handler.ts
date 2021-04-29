@@ -7,7 +7,7 @@ import {
     QuestionSummary,
     ReportDetailPerUser,
     UserReportSummary
-} from '../def/response';
+} from '..';
 import {NumberUtil} from '../../util/number-util';
 import {CorrelationData, SunbirdTelemetry} from '../../telemetry';
 import Telemetry = SunbirdTelemetry.Telemetry;
@@ -49,20 +49,26 @@ export class SummarizerHandler {
 
     public static mapDBEntriesToLearnerAssesmentSummary(assesmentsInDb: LearnerSummaryEntry.SchemaMap[],
                                                         cache: Map<string, ContentCache>): LearnerAssessmentSummary[] {
-        return assesmentsInDb.map((assesment: LearnerSummaryEntry.SchemaMap) => {
-            const contentCache: ContentCache | undefined = cache.get(assesment[LearnerSummaryEntry.COLUMN_NAME_CONTENT_ID]) ;
-            return {
-                uid: assesment[LearnerSummaryEntry.COLUMN_NAME_UID].toString(),
-                contentId: assesment[LearnerSummaryEntry.COLUMN_NAME_CONTENT_ID].toString(),
-                noOfQuestions: NumberUtil.parseInt(assesment[LearnerSummaryEntry.COLUMN_NAME_NO_OF_QUESTIONS]),
-                correctAnswers: NumberUtil.parseInt(assesment[LearnerSummaryEntry.COLUMN_NAME_CORRECT_ANSWERS]),
-                totalTimespent: Number(assesment[LearnerSummaryEntry.COLUMN_NAME_TOTAL_TIME_SPENT]),
-                hierarchyData: assesment[LearnerSummaryEntry.COLUMN_NAME_HIERARCHY_DATA].toString(),
-                totalMaxScore: NumberUtil.toPrecision(assesment[LearnerSummaryEntry.COLUMN_NAME_TOTAL_MAX_SCORE]),
-                totalScore: NumberUtil.toPrecision(assesment[LearnerSummaryEntry.COLUMN_NAME_TOTAL_SCORE]),
-                name: contentCache!.name
-            };
-        });
+        return assesmentsInDb
+            // .filter((assesment: LearnerSummaryEntry.SchemaMap) => {
+            //     const contentCache: ContentCache | undefined = cache.get(assesment[LearnerSummaryEntry.COLUMN_NAME_CONTENT_ID]);
+            //     return !!contentCache;
+            // })
+            .map((assesment: LearnerSummaryEntry.SchemaMap) => {
+                const contentCache: ContentCache | undefined = cache.get(assesment[LearnerSummaryEntry.COLUMN_NAME_CONTENT_ID]);
+                return {
+                    uid: assesment[LearnerSummaryEntry.COLUMN_NAME_UID].toString(),
+                    contentId: assesment[LearnerSummaryEntry.COLUMN_NAME_CONTENT_ID].toString(),
+                    noOfQuestions: NumberUtil.parseInt(assesment[LearnerSummaryEntry.COLUMN_NAME_NO_OF_QUESTIONS]),
+                    correctAnswers: NumberUtil.parseInt(assesment[LearnerSummaryEntry.COLUMN_NAME_CORRECT_ANSWERS]),
+                    totalTimespent: Number(assesment[LearnerSummaryEntry.COLUMN_NAME_TOTAL_TIME_SPENT]),
+                    hierarchyData: assesment[LearnerSummaryEntry.COLUMN_NAME_HIERARCHY_DATA].toString(),
+                    totalMaxScore: NumberUtil.toFixed(assesment[LearnerSummaryEntry.COLUMN_NAME_TOTAL_MAX_SCORE]),
+                    totalScore: NumberUtil.toFixed(assesment[LearnerSummaryEntry.COLUMN_NAME_TOTAL_SCORE]),
+                    totalQuestionsScore: contentCache ? contentCache!.totalScore : 0,
+                    name: contentCache ? contentCache!.name : assesment[LearnerSummaryEntry.COLUMN_NAME_CONTENT_ID],
+                };
+            });
     }
 
     public static mapDBEntriesToLearnerAssesmentDetails(assesmentDetailsInDb: LearnerAssessmentsEntry.SchemaMap[]):
@@ -75,13 +81,13 @@ export class SummarizerHandler {
                 qid: assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_QID],
                 qindex: Number(assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_Q_INDEX]),
                 correct: NumberUtil.parseInt(assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_CORRECT]),
-                score: NumberUtil.toPrecision(assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_SCORE]),
+                score: NumberUtil.toFixed(assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_SCORE]),
                 timespent: Number(assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_TIME_SPENT]),
                 res: assesmentDetailInDb[LearnerAssessmentsEntry[LearnerAssessmentsEntry.COLUMN_NAME_RES]],
                 timestamp: Number(assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_TIMESTAMP]),
                 qdesc: assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_Q_DESC],
                 qtitle: assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_Q_TITLE],
-                maxScore: NumberUtil.toPrecision(assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_MAX_SCORE]),
+                maxScore: NumberUtil.toFixed(assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_MAX_SCORE]),
                 hierarchyData: assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_HIERARCHY_DATA],
                 total_ts: Number(assesmentDetailInDb[LearnerAssessmentsEntry.COLUMN_NAME_TOTAL_TS])
             };
@@ -117,13 +123,13 @@ export class SummarizerHandler {
                 qid: questionReport[LearnerAssessmentsEntry.COLUMN_NAME_QID],
                 qindex: Number(questionReport[LearnerAssessmentsEntry.COLUMN_NAME_Q_INDEX]),
                 correct: NumberUtil.parseInt(questionReport[LearnerAssessmentsEntry.COLUMN_NAME_CORRECT]),
-                score: NumberUtil.toPrecision(questionReport[LearnerAssessmentsEntry.COLUMN_NAME_SCORE]),
+                score: NumberUtil.toFixed(questionReport[LearnerAssessmentsEntry.COLUMN_NAME_SCORE]),
                 timespent: Number(questionReport[LearnerAssessmentsEntry.COLUMN_NAME_TIME_SPENT]),
                 res: questionReport[LearnerAssessmentsEntry[LearnerAssessmentsEntry.COLUMN_NAME_RES]],
                 timestamp: Number(questionReport[LearnerAssessmentsEntry.COLUMN_NAME_TIMESTAMP]),
                 qdesc: questionReport[LearnerAssessmentsEntry.COLUMN_NAME_Q_DESC],
                 qtitle: questionReport[LearnerAssessmentsEntry.COLUMN_NAME_Q_TITLE],
-                maxScore: NumberUtil.toPrecision(questionReport[LearnerAssessmentsEntry.COLUMN_NAME_MAX_SCORE]),
+                maxScore: NumberUtil.toFixed(questionReport[LearnerAssessmentsEntry.COLUMN_NAME_MAX_SCORE]),
                 hierarchyData: questionReport[LearnerAssessmentsEntry.COLUMN_NAME_HIERARCHY_DATA],
                 total_ts: Number(questionReport[LearnerAssessmentsEntry.COLUMN_NAME_TOTAL_TS]),
                 marks: Number(questionReport[LearnerAssessmentsEntry.COLUMN_NAME_MARKS]),
@@ -149,7 +155,7 @@ export class SummarizerHandler {
             return {
                 uid: questionSummary.uid,
                 time: Number(questionSummary.time),
-                result: NumberUtil.parseInt(questionSummary.result),
+                result: NumberUtil.round(questionSummary.result),
                 max_score: NumberUtil.parseInt(questionSummary.max_score)
             };
         });
@@ -160,7 +166,7 @@ export class SummarizerHandler {
         return userReportsInDb.map((assesmentDetail: LearnerAssessmentsEntry.UserReportSchema) => {
             return {
                 totalTimespent: Number(assesmentDetail[LearnerAssessmentsEntry.COLUMN_NAME_TOTAL_TS]),
-                score: NumberUtil.toPrecision(assesmentDetail[LearnerAssessmentsEntry.COLUMN_NAME_SCORE]),
+                score: NumberUtil.toFixed(assesmentDetail[LearnerAssessmentsEntry.COLUMN_NAME_SCORE]),
                 hData: assesmentDetail[LearnerAssessmentsEntry.COLUMN_NAME_HIERARCHY_DATA],
                 contentId: assesmentDetail[LearnerAssessmentsEntry.COLUMN_NAME_CONTENT_ID],
                 uid: assesmentDetail[LearnerAssessmentsEntry.COLUMN_NAME_UID],
@@ -198,9 +204,9 @@ export class SummarizerHandler {
             timespent: Number(eData.duration),
             timestamp: telemetry.ets,
             res: JSON.stringify(eData.resvalues),
-            qdesc:  question && question.desc,
+            qdesc: question && question.desc,
             qtitle: question && question.title,
-            maxScore:  question && Number(question.maxscore),
+            maxScore: question && Number(question.maxscore),
             hierarchyData: this.getHierarchyData(cDataList)
         };
 

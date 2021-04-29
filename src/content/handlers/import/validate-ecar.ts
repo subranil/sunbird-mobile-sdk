@@ -1,16 +1,14 @@
-import {ImportContentContext} from '../..';
+import {ContentData, ContentErrorCode, ContentImportStatus, FileName, ImportContentContext, Visibility} from '../..';
 import {Response} from '../../../api';
-import {ContentErrorCode, ContentImportStatus, Visibility} from '../../util/content-constants';
 import {FileService} from '../../../util/file/def/file-service';
 import {ContentUtil} from '../../util/content-util';
 import {AppConfig} from '../../../api/config/app-config';
 import {DbService} from '../../../db';
 import {GetContentDetailsHandler} from '../get-content-details-handler';
 import {ContentEntry} from '../../db/schema';
-import COLUMN_NAME_PATH = ContentEntry.COLUMN_NAME_PATH;
+import {ArrayUtil} from '../../../util/array-util';
 
 export class ValidateEcar {
-    private readonly MANIFEST_FILE_NAME = 'manifest.json';
 
     constructor(private fileService: FileService,
                 private dbService: DbService,
@@ -20,7 +18,7 @@ export class ValidateEcar {
 
     public async execute(importContext: ImportContentContext): Promise<Response> {
         const response: Response = new Response();
-        const data = await this.fileService.readAsText(importContext.tmpLocation!, this.MANIFEST_FILE_NAME);
+        const data = await this.fileService.readAsText(importContext.tmpLocation!, FileName.MANIFEST.valueOf());
 
         if (!data) {
             response.errorMesg = ContentErrorCode.IMPORT_FAILED_MANIFEST_FILE_NOT_FOUND.valueOf();
@@ -36,7 +34,6 @@ export class ValidateEcar {
             throw response;
         }
         const archive = manifestJson.archive;
-        const items = archive.items;
         if (!archive.items) {
             response.errorMesg = ContentErrorCode.IMPORT_FAILED_NO_CONTENT_METADATA.valueOf();
             await this.fileService.removeRecursively(importContext.tmpLocation!);
@@ -46,44 +43,83 @@ export class ValidateEcar {
         importContext.manifestVersion = manifestJson.ver;
         importContext.items = [];
 
+        const items = archive.items;
+        const contentIds: string[] = [];
+        // TODO: Following loop can be replaced with childNodes of root content.
         for (const e of items) {
-            const element = e as any;
-            const identifier = element.identifier;
-            const visibility = ContentUtil.readVisibility(element);
-            const compatibilityLevel = ContentUtil.readCompatibilityLevel(element);
-            if (visibility === Visibility.DEFAULT
-                && !ContentUtil.isCompatible(this.appConfig, compatibilityLevel)) {
-                this.skipContent(importContext, identifier, visibility, ContentImportStatus.NOT_COMPATIBLE);
-                continue;
-            }
+            const item = e as any;
+            const identifier = item.identifier;
+            contentIds.push(identifier);
+        }
+        const query = ArrayUtil.joinPreservingQuotes(contentIds);
+        const existingContentModels = await this.getContentDetailsHandler.fetchFromDBForAll(query).toPromise();
 
-            const status = element.status;
+        const result = existingContentModels.reduce((map, obj) => {
+            map[obj.identifier] = obj;
+            return map;
+        }, {});
+
+        let isRootExists = false;
+        importContext.existedContentIdentifiers = {};
+
+        for (const e of items) {
+            const item = e as any;
+            const identifier = item.identifier;
+            const visibility = ContentUtil.readVisibility(item);
+            const status = item.status;
             const isDraftContent: boolean = ContentUtil.isDraftContent(status);
             // Draft content expiry .To prevent import of draft content if the expires date is lesser than from the current date.
-            if (isDraftContent && ContentUtil.isExpired(element.expires)) {
-                this.skipContent(importContext, identifier, visibility, ContentImportStatus.CONTENT_EXPIRED);
+            if (isDraftContent && ContentUtil.isExpired(item.expires)) {
+                this.skipContent(importContext, identifier, visibility, ContentImportStatus.CONTENT_EXPIRED, items);
                 continue;
             }
 
-            const contentDetailsHandler = this.getContentDetailsHandler;
-            const existingContentModel = await contentDetailsHandler.fetchFromDB(identifier).toPromise();
+            // If more than 1 root content is bundled in ecar then initialize the isRootExists to false.
+            if (visibility === Visibility.DEFAULT.valueOf()) {
+                isRootExists = false;
+            }
+
+            const existingContentModel: ContentEntry.SchemaMap = result[identifier];
             let existingContentPath;
 
             if (existingContentModel) {
-                existingContentPath = existingContentModel[COLUMN_NAME_PATH];
+                const refCount: number | undefined = existingContentModel[ContentEntry.COLUMN_NAME_REF_COUNT];
+                existingContentPath = existingContentModel[ContentEntry.COLUMN_NAME_PATH];
+
+                // If more than 1 root content is bundled in ecar then initialize the isRootExists to false.
+                if (existingContentPath
+                    && visibility === Visibility.DEFAULT.valueOf()  // Check only for root nodes
+                    && refCount && refCount > 0) {  // refCount = 0 means that content was imported and then deleted from the device,
+                    // which will consider as not imported if its equals to zero.
+                    isRootExists = true;
+
+                    const existingContentData: ContentData = JSON.parse(existingContentModel[ContentEntry.COLUMN_NAME_LOCAL_DATA]);
+                    if (existingContentData
+                        && item.pkgVersion > existingContentData.pkgVersion
+                        && existingContentData.childNodes && existingContentData.childNodes.length > 0) {
+                        importContext.contentIdsToDelete = new Set(existingContentData.childNodes);
+                    }
+                }
             }
 
             // To check whether the file is already imported or not
             if (existingContentPath     // Check if path of old content is not empty.
                 && visibility === Visibility.DEFAULT.valueOf() // If visibility is Parent then invoke ExtractPayloads
-                && !ContentUtil.isDuplicateCheckRequired(isDraftContent, element.pkgVersion) // Check if its draft and pkgVersion is 0.
-                && ContentUtil.isImportFileExist(existingContentModel, element)// Check whether the file is already imported or not.
+                && !ContentUtil.isDuplicateCheckRequired(isDraftContent, item.pkgVersion) // Check if its draft and pkgVersion is 0.
+                && ContentUtil.isImportFileExist(existingContentModel, item) // Check whether the file is already imported or not.
             ) {
-                this.skipContent(importContext, identifier, visibility, ContentImportStatus.ALREADY_EXIST);
+                importContext.rootIdentifier = identifier;
+                this.skipContent(importContext, identifier, visibility, ContentImportStatus.ALREADY_EXIST, items);
                 continue;
             }
 
-            importContext.items!.push(element);
+            if (isRootExists
+                // If new content is added in the updated version then do not add in existedContentIdentifiers
+                && importContext.contentIdsToDelete.delete(identifier)) {
+                importContext.existedContentIdentifiers[identifier] = true;
+            }
+
+            importContext.items!.push(item);
         }
 
         response.body = importContext;
@@ -94,9 +130,15 @@ export class ValidateEcar {
      * Skip the content.
      */
     private skipContent(importContext: ImportContentContext, identifier: string, visibility: string,
-                        contentImportStatus: ContentImportStatus) {
+                        contentImportStatus: ContentImportStatus, items) {
         if (visibility === Visibility.DEFAULT) {
-            importContext.contentImportResponseList!.push({identifier: identifier, status: contentImportStatus});
+            if (contentImportStatus === ContentImportStatus.ALREADY_EXIST) {
+                if (items && items.length === 1) {
+                    importContext.contentImportResponseList!.push({identifier: identifier, status: contentImportStatus});
+                }
+            } else {
+                importContext.contentImportResponseList!.push({identifier: identifier, status: contentImportStatus});
+            }
         }
         importContext.skippedItemsIdentifier!.push(identifier);
     }

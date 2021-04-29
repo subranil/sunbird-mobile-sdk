@@ -1,35 +1,36 @@
 import {
     AcceptTermsConditionRequest,
+    Consent,
     ContentAccess,
     ContentAccessStatus,
     GenerateOtpRequest,
     GetAllProfileRequest,
     IsProfileAlreadyInUseRequest,
     LocationSearchCriteria,
+    MergeServerProfilesRequest,
     NoActiveSessionError,
     NoProfileFoundError,
     Profile,
     ProfileExportRequest,
     ProfileExportResponse,
     ProfileService,
-    ProfileServiceConfig,
     ProfileSession,
     ProfileSource,
     ProfileType,
+    ReadConsentResponse,
     ServerProfile,
     ServerProfileDetailsRequest,
-    ServerProfileSearchCriteria,
-    UpdateServerProfileInfoRequest,
+    TenantInfoRequest,
+    UpdateConsentResponse,
+    UserFeedEntry,
+    UserMigrateRequest,
     VerifyOtpRequest
 } from '..';
 import {DbService} from '../../db';
-import {Observable} from 'rxjs';
 import {GroupProfileEntry, ProfileEntry} from '../db/schema';
 import {TenantInfo} from '../def/tenant-info';
 import {TenantInfoHandler} from '../handler/tenant-info-handler';
-import {ApiService, Response} from '../../api';
-import {UpdateServerProfileInfoHandler} from '../handler/update-server-profile-info-handler';
-import {SearchServerProfileHandler} from '../handler/search-server-profile-handler';
+import {ApiConfig, ApiService, HttpRequestType, Request, Response} from '../../api';
 import {GetServerProfileDetailsHandler} from '../handler/get-server-profile-details-handler';
 import {CachedItemStore, KeyValueStore} from '../../key-value-store';
 import {ProfileDbEntryMapper} from '../util/profile-db-entry-mapper';
@@ -71,30 +72,70 @@ import {TransportAssesments} from '../handler/import/transport-assesments';
 import {UpdateImportedProfileMetadata} from '../handler/import/update-imported-profile-metadata';
 import {Actor, AuditState, ObjectType, TelemetryAuditRequest, TelemetryService} from '../../telemetry';
 import {ObjectUtil} from '../../util/object-util';
+import {TransportProfiles} from '../handler/import/transport-profiles';
+import {SdkConfig} from '../../sdk-config';
+import {Container, inject, injectable} from 'inversify';
+import {CsInjectionTokens, InjectionTokens} from '../../injection-tokens';
+import {AuthService} from '../../auth';
+import {defer, from, iif, Observable, of, throwError, zip} from 'rxjs';
+import {catchError, finalize, map, mapTo, mergeMap, tap} from 'rxjs/operators';
+import {UserMigrateResponse} from '../def/user-migrate-response';
+import {UserMigrateHandler} from '../handler/user-migrate-handler';
+import {ManagedProfileManager} from '../handler/managed-profile-manager';
+import {CsUserService} from '@project-sunbird/client-services/services/user';
+import {CheckUserExistsRequest} from '../def/check-user-exists-request';
+import {CheckUserExistsResponse} from '../def/check-user-exists-response';
+import {UpdateServerProfileDeclarationsResponse} from '../def/update-server-profile-declarations-response';
+import {UpdateServerProfileDeclarationsRequest} from '../def/update-server-profile-declarations-request';
+import {CsModule} from '@project-sunbird/client-services';
+import {UpdateUserFeedRequest} from '../def/update-user-feed-request';
+import {DeleteUserFeedRequest} from '../def/delete-user-feed-request';
+import {UpdateServerProfileResponse} from '../def/update-server-profile-response';
+import {UpdateServerProfileInfoRequest} from '../def/update-server-profile-info-request';
 
+@injectable()
 export class ProfileServiceImpl implements ProfileService {
     private static readonly KEY_USER_SESSION = ProfileKeys.KEY_USER_SESSION;
-    private telemetryService: TelemetryService;
+    private static readonly MERGE_SERVER_PROFILES_PATH = '/api/user/v1/account/merge';
 
-    constructor(private profileServiceConfig: ProfileServiceConfig,
-                private dbService: DbService,
-                private apiService: ApiService,
-                private cachedItemStore: CachedItemStore<ServerProfile>,
-                private keyValueStore: KeyValueStore,
-                private sharedPreferences: SharedPreferences,
-                private frameworkService: FrameworkService,
-                private fileService: FileService,
-                private deviceInfo: DeviceInfo) {
+    private readonly apiConfig: ApiConfig;
+    readonly managedProfileManager: ManagedProfileManager;
+
+    constructor(
+        @inject(InjectionTokens.CONTAINER) private container: Container,
+        @inject(InjectionTokens.SDK_CONFIG) private sdkConfig: SdkConfig,
+        @inject(InjectionTokens.DB_SERVICE) private dbService: DbService,
+        @inject(InjectionTokens.API_SERVICE) private apiService: ApiService,
+        @inject(InjectionTokens.CACHED_ITEM_STORE) private cachedItemStore: CachedItemStore,
+        @inject(InjectionTokens.KEY_VALUE_STORE) private keyValueStore: KeyValueStore,
+        @inject(InjectionTokens.SHARED_PREFERENCES) private sharedPreferences: SharedPreferences,
+        @inject(InjectionTokens.FRAMEWORK_SERVICE) private frameworkService: FrameworkService,
+        @inject(InjectionTokens.FILE_SERVICE) private fileService: FileService,
+        @inject(InjectionTokens.DEVICE_INFO) private deviceInfo: DeviceInfo,
+        @inject(InjectionTokens.AUTH_SERVICE) private authService: AuthService,
+        @inject(CsInjectionTokens.USER_SERVICE) private userService: CsUserService
+    ) {
+        this.apiConfig = this.sdkConfig.apiConfig;
+        this.managedProfileManager = new ManagedProfileManager(
+            this,
+            this.authService,
+            this.sdkConfig.profileServiceConfig,
+            this.apiService,
+            this.cachedItemStore,
+            this.dbService,
+            this.frameworkService,
+            this.sharedPreferences
+        );
     }
 
-    public registerTelemetryService(telemetryService: TelemetryService) {
-        this.telemetryService = telemetryService;
+    private get telemetryService(): TelemetryService {
+        return this.container.get<TelemetryService>(InjectionTokens.TELEMETRY_SERVICE);
     }
 
-    onInit(): Observable<undefined> {
-        return this.sharedPreferences.getString(ProfileServiceImpl.KEY_USER_SESSION)
-            .map((s) => s && JSON.parse(s))
-            .mergeMap((profileSession: ProfileSession) => {
+    preInit(): Observable<undefined> {
+        return this.sharedPreferences.getString(ProfileServiceImpl.KEY_USER_SESSION).pipe(
+            map((s) => s && JSON.parse(s)),
+            mergeMap((profileSession?: ProfileSession) => {
                 if (!profileSession) {
                     const request: Profile = {
                         uid: '',
@@ -104,20 +145,30 @@ export class ProfileServiceImpl implements ProfileService {
                     };
 
                     return this.createProfile(request)
-                        .mergeMap((profile: Profile) => {
-                            return this.setActiveSessionForProfile(profile.uid);
-                        })
-                        .mapTo(undefined);
+                        .pipe(
+                            mergeMap((profile: Profile) => {
+                                return this.setActiveSessionForProfile(profile.uid);
+                            }),
+                            mapTo(undefined)
+                        );
                 }
 
-                return this.setActiveSessionForProfile(profileSession.uid)
-                    .do(async () => await TelemetryLogger.log.end({
-                        type: 'session',
-                        env: 'sdk',
-                        duration: Math.floor((Date.now() - profileSession.createdTime) / 1000)
-                    }).toPromise())
-                    .mapTo(undefined);
-            });
+                return profileSession.managedSession ?
+                    this.managedProfileManager.switchSessionToManagedProfile({
+                        uid: profileSession.managedSession.uid
+                    }) : this.setActiveSessionForProfile(
+                        profileSession.uid
+                    ).pipe(
+                        mapTo(undefined)
+                    );
+            })
+        );
+    }
+
+    checkServerProfileExists(request: CheckUserExistsRequest): Observable<CheckUserExistsResponse> {
+        return this.userService.checkUserExists(
+            request.matching, request.captchaResponseToken ? {token: request.captchaResponseToken, app: '1'} : undefined
+        );
     }
 
     createProfile(profile: Profile, profileSource: ProfileSource = ProfileSource.LOCAL): Observable<Profile> {
@@ -152,58 +203,91 @@ export class ProfileServiceImpl implements ProfileService {
         return this.dbService.insert({
             table: ProfileEntry.TABLE_NAME,
             modelJson: ProfileDbEntryMapper.mapProfileToProfileDBEntry(profile)
-        }).do(async () => {
-            await this.getActiveProfileSession()
-                .map((session) => session.uid)
-                .catch((e) => {
-                    if (e instanceof NoActiveSessionError) {
-                        return Observable.of(profile.uid);
-                    }
+        }).pipe(
+            tap(async () => {
+                await this.getActiveProfileSession()
+                    .pipe(
+                        map((session) => session.uid),
+                        catchError((e) => {
+                            if (e instanceof NoActiveSessionError) {
+                                return of(profile.uid);
+                            }
 
-                    return Observable.throw(e);
-                })
-                .mergeMap((uid) => {
-                    const actor = new Actor();
-                    actor.id = uid;
-                    actor.type = Actor.TYPE_SYSTEM;
+                            return throwError(e);
+                        }),
+                        mergeMap((uid) => {
+                            const actor = new Actor();
+                            actor.id = uid;
+                            actor.type = Actor.TYPE_SYSTEM;
 
-                    const auditRequest: TelemetryAuditRequest = {
-                        env: 'sdk',
-                        actor,
-                        currentState: AuditState.AUDIT_CREATED,
-                        updatedProperties: ObjectUtil.getTruthyProps(profile),
-                        objId: profile.uid,
-                        objType: ObjectType.USER
-                    };
+                            const auditRequest: TelemetryAuditRequest = {
+                                env: 'sdk',
+                                actor,
+                                currentState: AuditState.AUDIT_CREATED,
+                                updatedProperties: ObjectUtil.getTruthyProps(profile),
+                                objId: profile.uid,
+                                objType: ObjectType.USER,
+                                correlationData: [{
+                                    id: profile.profileType,
+                                    type: 'UserRole'
+                                }]
+                            };
 
-                    return this.telemetryService.audit(auditRequest);
-                }).toPromise();
-        }).mergeMap(() => Observable.of(profile));
+                            return this.telemetryService.audit(auditRequest);
+                        })
+                    )
+                    .toPromise();
+            }),
+            mergeMap(() => of(profile))
+        );
     }
 
     deleteProfile(uid: string): Observable<undefined> {
-        return this.dbService.delete({
+        return this.dbService.read({
             table: ProfileEntry.TABLE_NAME,
             selection: `${ProfileEntry.COLUMN_NAME_UID} = ?`,
-            selectionArgs: [uid]
-        }).do(async () => {
-            await this.getActiveProfileSession()
-                .mergeMap((session: ProfileSession) => {
-                    const actor = new Actor();
-                    actor.id = session.uid;
-                    actor.type = Actor.TYPE_SYSTEM;
+            selectionArgs: [uid],
+        }).pipe(
+            map((rows) => {
+                if (!rows || !rows[0]) {
+                    throw new NoProfileFoundError(`No Profile found with ID ${uid}`);
+                }
 
-                    const auditRequest: TelemetryAuditRequest = {
-                        env: 'sdk',
-                        actor,
-                        currentState: AuditState.AUDIT_DELETED,
-                        objId: uid,
-                        objType: ObjectType.USER
-                    };
+                return ProfileDbEntryMapper.mapProfileDBEntryToProfile(rows[0]);
+            }),
+            tap(async (profile: Profile) => {
+                return await this.getActiveProfileSession()
+                    .pipe(
+                        mergeMap((session: ProfileSession) => {
+                            const actor = new Actor();
+                            actor.id = session.uid;
+                            actor.type = Actor.TYPE_SYSTEM;
 
-                    return this.telemetryService.audit(auditRequest);
-                }).toPromise();
-        });
+                            const auditRequest: TelemetryAuditRequest = {
+                                env: 'sdk',
+                                actor,
+                                currentState: AuditState.AUDIT_DELETED,
+                                objId: uid,
+                                objType: ObjectType.USER,
+                                correlationData: [{
+                                    id: profile.profileType,
+                                    type: 'UserRole'
+                                }]
+                            };
+
+                            return this.telemetryService.audit(auditRequest);
+                        })
+                    )
+                    .toPromise();
+            }),
+            mergeMap(() => {
+                return this.dbService.delete({
+                    table: ProfileEntry.TABLE_NAME,
+                    selection: `${ProfileEntry.COLUMN_NAME_UID} = ?`,
+                    selectionArgs: [uid]
+                });
+            })
+        );
     }
 
     updateProfile(profile: Profile): Observable<Profile> {
@@ -211,55 +295,61 @@ export class ProfileServiceImpl implements ProfileService {
             table: ProfileEntry.TABLE_NAME,
             selection: `${ProfileEntry.COLUMN_NAME_UID} = ?`,
             selectionArgs: [profile.uid],
-        }).map((rows) => {
-            if (!rows || !rows[0]) {
-                return Observable.throw(new NoProfileFoundError(`No Profile found with ID ${profile.uid}`));
-            }
+        }).pipe(
+            map((rows) => {
+                if (!rows || !rows[0]) {
+                    throw new NoProfileFoundError(`No Profile found with ID ${profile.uid}`);
+                }
 
-            return ProfileDbEntryMapper.mapProfileDBEntryToProfile(rows[0]);
-        }).do(async (prevProfile) => {
-            await this.getActiveProfileSession()
-                .mergeMap((session: ProfileSession) => {
-                    const actor = new Actor();
-                    actor.id = session.uid;
-                    actor.type = Actor.TYPE_SYSTEM;
+                return ProfileDbEntryMapper.mapProfileDBEntryToProfile(rows[0]);
+            }),
+            tap(async (prevProfile) => {
+                await this.getActiveProfileSession().pipe(
+                    mergeMap((session: ProfileSession) => {
+                        const actor = new Actor();
+                        actor.id = session.uid;
+                        actor.type = Actor.TYPE_SYSTEM;
 
-                    const auditRequest: TelemetryAuditRequest = {
-                        env: 'sdk',
-                        actor,
-                        currentState: AuditState.AUDIT_UPDATED,
-                        updatedProperties: ObjectUtil.getPropDiff(profile, prevProfile),
-                        objId: profile.uid,
-                        objType: ObjectType.USER
-                    };
+                        const auditRequest: TelemetryAuditRequest = {
+                            env: 'sdk',
+                            actor,
+                            currentState: AuditState.AUDIT_UPDATED,
+                            updatedProperties: ObjectUtil.getPropDiff(profile, prevProfile),
+                            objId: profile.uid,
+                            objType: ObjectType.USER,
+                            correlationData: [{
+                                id: profile.profileType,
+                                type: 'UserRole'
+                            }]
+                        };
 
-                    return this.telemetryService.audit(auditRequest);
-                }).toPromise();
-        }).mergeMap(() => {
-            const profileDBEntry = ProfileDbEntryMapper.mapProfileToProfileDBEntry(profile);
-            delete profileDBEntry[ProfileEntry.COLUMN_NAME_CREATED_AT];
+                        return this.telemetryService.audit(auditRequest);
+                    })
+                ).toPromise();
+            }),
+            mergeMap(() => {
+                const profileDBEntry = ProfileDbEntryMapper.mapProfileToProfileDBEntry(profile);
+                delete profileDBEntry[ProfileEntry.COLUMN_NAME_CREATED_AT];
 
-            return this.dbService.update({
-                table: ProfileEntry.TABLE_NAME,
-                selection: `${ProfileEntry.COLUMN_NAME_UID} = ?`,
-                selectionArgs: [profile.uid],
-                modelJson: profileDBEntry
-            }).mergeMap(() => Observable.of(profile));
-        });
+                return this.dbService.update({
+                    table: ProfileEntry.TABLE_NAME,
+                    selection: `${ProfileEntry.COLUMN_NAME_UID} = ?`,
+                    selectionArgs: [profile.uid],
+                    modelJson: profileDBEntry
+                }).pipe(
+                    mergeMap(() => of(profile))
+                );
+            })
+        );
     }
 
-    updateServerProfile(updateUserInfoRequest: UpdateServerProfileInfoRequest): Observable<Profile> {
-        return new UpdateServerProfileInfoHandler(this.apiService,
-            this.profileServiceConfig).handle(updateUserInfoRequest);
+    updateServerProfile(updateUserInfoRequest: UpdateServerProfileInfoRequest): Observable<UpdateServerProfileResponse> {
+        return this.userService.updateProfile(updateUserInfoRequest, { apiPath : '/api/user/v1'});
     }
 
-    getServerProfiles(searchCriteria: ServerProfileSearchCriteria): Observable<ServerProfile[]> {
-        return new SearchServerProfileHandler(this.apiService, this.profileServiceConfig).handle(searchCriteria);
-    }
-
-    getTenantInfo(): Observable<TenantInfo> {
+    getTenantInfo(tenantInfoRequest: TenantInfoRequest): Observable<TenantInfo> {
         return new TenantInfoHandler(this.apiService,
-            this.profileServiceConfig).handle();
+            this.sdkConfig.profileServiceConfig).handle(tenantInfoRequest);
     }
 
     getAllProfiles(profileRequest?: GetAllProfileRequest): Observable<Profile[]> {
@@ -267,7 +357,9 @@ export class ProfileServiceImpl implements ProfileService {
             return this.dbService.read({
                 table: ProfileEntry.TABLE_NAME,
                 columns: []
-            }).map((profiles: ProfileEntry.SchemaMap[]) => this.mapDbProfileEntriesToProfiles(profiles));
+            }).pipe(
+                map((profiles: ProfileEntry.SchemaMap[]) => this.mapDbProfileEntriesToProfiles(profiles))
+            );
         }
 
         if (!profileRequest.groupId) {
@@ -276,7 +368,9 @@ export class ProfileServiceImpl implements ProfileService {
                 selection: `${ProfileEntry.COLUMN_NAME_SOURCE} = ?`,
                 selectionArgs: [profileRequest.local ? ProfileSource.LOCAL : ProfileSource.SERVER],
                 columns: []
-            }).map((profiles: ProfileEntry.SchemaMap[]) => this.mapDbProfileEntriesToProfiles(profiles));
+            }).pipe(
+                map((profiles: ProfileEntry.SchemaMap[]) => this.mapDbProfileEntriesToProfiles(profiles))
+            );
         }
 
         if (profileRequest.groupId && (profileRequest.local || profileRequest.server)) {
@@ -286,7 +380,9 @@ export class ProfileServiceImpl implements ProfileService {
                 ${GroupProfileEntry.TABLE_NAME}.${GroupProfileEntry.COLUMN_NAME_UID}
                 WHERE ${GroupProfileEntry.COLUMN_NAME_GID} = "${profileRequest.groupId}" AND
                 ${ProfileEntry.COLUMN_NAME_SOURCE} = "${profileRequest.local ? ProfileSource.LOCAL : ProfileSource.SERVER}"
-            `).map((profiles: ProfileEntry.SchemaMap[]) => this.mapDbProfileEntriesToProfiles(profiles));
+            `).pipe(
+                map((profiles: ProfileEntry.SchemaMap[]) => this.mapDbProfileEntriesToProfiles(profiles))
+            );
         }
 
 
@@ -296,122 +392,153 @@ export class ProfileServiceImpl implements ProfileService {
             ${ProfileEntry.TABLE_NAME}.${ProfileEntry.COLUMN_NAME_UID} =
             ${GroupProfileEntry.TABLE_NAME}.${GroupProfileEntry.COLUMN_NAME_UID}
             WHERE ${GroupProfileEntry.TABLE_NAME}.${GroupProfileEntry.COLUMN_NAME_GID} = "${profileRequest.groupId}"
-        `).map((profiles: ProfileEntry.SchemaMap[]) => this.mapDbProfileEntriesToProfiles(profiles));
+        `).pipe(
+            map((profiles: ProfileEntry.SchemaMap[]) => this.mapDbProfileEntriesToProfiles(profiles))
+        );
     }
 
     getServerProfilesDetails(serverProfileDetailsRequest: ServerProfileDetailsRequest): Observable<ServerProfile> {
-        return new GetServerProfileDetailsHandler(this.apiService, this.profileServiceConfig, this.cachedItemStore, this.keyValueStore)
-            .handle(serverProfileDetailsRequest);
+        return new GetServerProfileDetailsHandler(this.cachedItemStore, this.keyValueStore, this.container)
+          .handle(serverProfileDetailsRequest);
     }
 
     getActiveSessionProfile({requiredFields}: Pick<ServerProfileDetailsRequest, 'requiredFields'>): Observable<Profile> {
-        return this.getActiveProfileSession()
-            .mergeMap((profileSession: ProfileSession) => {
+        return this.getActiveProfileSession().pipe(
+            mergeMap((profileSession: ProfileSession) => {
                 return this.dbService.read({
                     table: ProfileEntry.TABLE_NAME,
                     selection: `${ProfileEntry.COLUMN_NAME_UID} = ?`,
-                    selectionArgs: [profileSession.uid]
-                }).map((rows) => {
-                    const profileDBEntry = rows && rows[0];
+                    selectionArgs: [profileSession.managedSession ? profileSession.managedSession.uid : profileSession.uid]
+                }).pipe(
+                    map((rows) => {
+                        const profileDBEntry = rows && rows[0];
 
-                    if (!profileDBEntry) {
-                        throw new NoProfileFoundError(`No profile found for profileSession with uid ${profileSession.uid}`);
-                    }
+                        if (!profileDBEntry) {
+                            throw new NoProfileFoundError(`No profile found for profileSession with uid ${profileSession.managedSession ? profileSession.managedSession.uid : profileSession.uid}`);
+                        }
 
-                    return ProfileDbEntryMapper.mapProfileDBEntryToProfile(profileDBEntry);
-                }).mergeMap((profile: Profile) => {
-                    if (profile.source === ProfileSource.SERVER) {
-                        return this.getServerProfilesDetails({
-                            userId: profile.uid,
-                            requiredFields
-                        }).map((serverProfile: ServerProfile) => ({
-                            ...profile,
-                            handle: serverProfile.firstName + ', ' + serverProfile.lastName,
-                            serverProfile
-                        }));
-                    }
+                        return ProfileDbEntryMapper.mapProfileDBEntryToProfile(profileDBEntry);
+                    }),
+                    mergeMap((profile: Profile) => {
+                        if (profile.source === ProfileSource.SERVER) {
+                            return this.getServerProfilesDetails({
+                                userId: profile.uid,
+                                requiredFields
+                            }).pipe(
+                                map((serverProfile: ServerProfile) => ({
+                                    ...profile,
+                                    handle: serverProfile.firstName + (serverProfile.lastName ? ' ' + serverProfile.lastName : ''),
+                                    serverProfile
+                                }))
+                            );
+                        }
 
-                    return Observable.of(profile);
-                });
-            });
+                        return of(profile);
+                    })
+                );
+            })
+        );
     }
 
     setActiveSessionForProfile(profileUid: string): Observable<boolean> {
-        return this.dbService
-            .read({
-                table: ProfileEntry.TABLE_NAME,
-                selection: `${ProfileEntry.COLUMN_NAME_UID} = ?`,
-                selectionArgs: [profileUid]
-            })
-            .map((rows: ProfileEntry.SchemaMap[]) =>
+        return defer(() => this.generateSessionEndTelemetry()).pipe(
+            mergeMap(() => {
+                return this.dbService.read({
+                    table: ProfileEntry.TABLE_NAME,
+                    selection: `${ProfileEntry.COLUMN_NAME_UID} = ?`,
+                    selectionArgs: [profileUid]
+                });
+            }),
+            map((rows: ProfileEntry.SchemaMap[]) =>
                 rows && rows[0] && ProfileDbEntryMapper.mapProfileDBEntryToProfile(rows[0])
-            )
-            .map((profile: Profile | undefined) => {
+            ),
+            map((profile: Profile | undefined) => {
                 if (!profile) {
                     throw new NoProfileFoundError('No Profile found');
                 }
                 return profile;
-            })
-            .mergeMap((profile: Profile) =>
-                Observable.if(
+            }),
+            mergeMap((profile: Profile) =>
+                iif(
                     () => profile.source === ProfileSource.SERVER,
-                    Observable.defer(() => {
+                    defer(() => {
                         return this.getServerProfilesDetails({
                             userId: profile.uid,
                             requiredFields: []
-                        }).map((serverProfile: ServerProfile) => ({
-                            ...profile,
-                            serverProfile
-                        })).mergeMap((attachedServerProfileDetailsProfile: Profile) => {
-                            return this.frameworkService
-                                .setActiveChannelId(attachedServerProfileDetailsProfile.serverProfile!.rootOrg.hashTagId);
-                        });
+                        }).pipe(
+                            map((serverProfile: ServerProfile) => ({
+                                ...profile,
+                                serverProfile
+                            })),
+                            mergeMap((attachedServerProfileDetailsProfile: Profile) => {
+                                return this.frameworkService
+                                    .setActiveChannelId(attachedServerProfileDetailsProfile.serverProfile!.rootOrg.hashTagId);
+                            }),
+                            catchError(() => of(undefined))
+                        );
                     }),
-                    Observable.defer(() => Observable.of(undefined))
-                ).mapTo(profile)
-            )
-            .mergeMap((profile: Profile) => {
+                    this.frameworkService.setActiveChannelId(this.sdkConfig.apiConfig.api_authentication.channelId).pipe(
+                        mapTo(undefined)
+                    )
+                ).pipe(
+                    mapTo(profile)
+                )
+            ),
+            mergeMap((profile: Profile) => {
                 const profileSession = new ProfileSession(profile.uid);
-                return this.sharedPreferences.putString(ProfileServiceImpl.KEY_USER_SESSION, JSON.stringify({
-                    uid: profileSession.uid,
-                    sid: profileSession.sid,
-                    createdTime: profileSession.createdTime
-                })).mapTo(true);
-            })
-            .do(async () => await TelemetryLogger.log.start({
-                type: 'session', env: 'sdk'
-            }).toPromise());
+                if (CsModule.instance.isInitialised) {
+                    CsModule.instance.updateConfig({
+                        ...CsModule.instance.config,
+                        core: {
+                            ...CsModule.instance.config.core,
+                            global: {
+                                ...CsModule.instance.config.core.global,
+                                sessionId: profileSession.sid
+                            }
+                        }
+                    });
+                }
+                return this.sharedPreferences.putString(
+                    ProfileServiceImpl.KEY_USER_SESSION, JSON.stringify(profileSession)
+                ).pipe(
+                    mapTo(true)
+                );
+            }),
+            tap(async () => await this.generateSessionStartTelemetry())
+        );
     }
 
     getActiveProfileSession(): Observable<ProfileSession> {
-        return this.sharedPreferences.getString(ProfileServiceImpl.KEY_USER_SESSION)
-            .map((response) => {
+        return this.sharedPreferences.getString(ProfileServiceImpl.KEY_USER_SESSION).pipe(
+            map((response) => {
                 if (response) {
                     return JSON.parse(response);
                 }
 
                 throw new NoActiveSessionError('No active session available');
-            });
+            })
+        );
     }
 
     acceptTermsAndConditions(acceptTermsConditions: AcceptTermsConditionRequest): Observable<boolean> {
-        return new AcceptTermConditionHandler(this.apiService, this.profileServiceConfig).handle(acceptTermsConditions);
+        return new AcceptTermConditionHandler(this.apiService, this.sdkConfig.profileServiceConfig).handle(acceptTermsConditions);
     }
 
     isProfileAlreadyInUse(isProfileAlreadyInUseRequest: IsProfileAlreadyInUseRequest): Observable<ProfileExistsResponse> {
-        return new IsProfileAlreadyInUseHandler(this.apiService, this.profileServiceConfig).handle(isProfileAlreadyInUseRequest);
+        return new IsProfileAlreadyInUseHandler(this.apiService, this.sdkConfig.profileServiceConfig).handle(isProfileAlreadyInUseRequest);
     }
 
     generateOTP(generateOtpRequest: GenerateOtpRequest): Observable<boolean> {
-        return new GenerateOtpHandler(this.apiService, this.profileServiceConfig).handle(generateOtpRequest);
+        return new GenerateOtpHandler(this.apiService, this.sdkConfig.profileServiceConfig).handle(generateOtpRequest);
     }
 
     verifyOTP(verifyOTPRequest: VerifyOtpRequest): Observable<boolean> {
-        return new VerifyOtpHandler(this.apiService, this.profileServiceConfig).handle(verifyOTPRequest);
+        return new VerifyOtpHandler(this.apiService, this.sdkConfig.profileServiceConfig).handle(verifyOTPRequest);
     }
 
     searchLocation(locationSearchCriteria: LocationSearchCriteria): Observable<LocationSearchResult[]> {
-        return new SearchLocationHandler(this.apiService, this.profileServiceConfig).handle(locationSearchCriteria);
+        return new SearchLocationHandler(this.apiService, this.sdkConfig.profileServiceConfig, this.fileService, this.cachedItemStore)
+            .handle(locationSearchCriteria);
     }
 
     getAllContentAccess(criteria: ContentAccessFilterCriteria): Observable<ContentAccess[]> {
@@ -419,19 +546,17 @@ export class ProfileServiceImpl implements ProfileService {
         const query = `SELECT * FROM ${ContentAccessEntry.TABLE_NAME} ${ContentUtil.getUidnIdentifierFiler(
             criteria.uid, criteria.contentId)}`;
 
-        return this.dbService.execute(query).map((contentAccessList: ContentAccessEntry.SchemaMap[]) => {
-            return contentAccessList.map((contentAccess: ContentAccessEntry.SchemaMap) =>
-                ProfileHandler.mapDBEntryToContenetAccess(contentAccess));
-        });
-    }
-
-    private mapDbProfileEntriesToProfiles(profiles: ProfileEntry.SchemaMap[]): Profile[] {
-        return profiles.map((profile: ProfileEntry.SchemaMap) => ProfileDbEntryMapper.mapProfileDBEntryToProfile(profile));
+        return this.dbService.execute(query).pipe(
+            map((contentAccessList: ContentAccessEntry.SchemaMap[]) => {
+                return contentAccessList.map((contentAccess: ContentAccessEntry.SchemaMap) =>
+                    ProfileHandler.mapDBEntryToContenetAccess(contentAccess));
+            })
+        );
     }
 
     addContentAccess(contentAccess: ContentAccess): Observable<boolean> {
-        return this.getActiveProfileSession()
-            .mergeMap(({uid}: ProfileSession) => {
+        return this.getActiveProfileSession().pipe(
+            mergeMap(({uid}: ProfileSession) => {
                 return this.dbService.read({
                     table: ContentAccessEntry.TABLE_NAME,
                     selection:
@@ -440,36 +565,41 @@ export class ProfileServiceImpl implements ProfileService {
                     selectionArgs: [uid, contentAccess.contentId],
                     orderBy: `${ContentAccessEntry.COLUMN_NAME_EPOCH_TIMESTAMP} DESC`,
                     limit: '1'
-                }).mergeMap((contentAccessInDb: ContentAccessEntry.SchemaMap[]) => {
-                    const contentAccessDbModel: ContentAccessEntry.SchemaMap = {
-                        uid: uid,
-                        identifier: contentAccess.contentId,
-                        epoch_timestamp: Date.now(),
-                        status: ContentAccessStatus.PLAYED.valueOf(),
-                        content_type: contentAccess.contentType.toLowerCase(),
-                        learner_state: contentAccess.contentLearnerState! &&
-                            JSON.stringify(contentAccess.contentLearnerState!.learnerState)
-                    };
-                    if (contentAccessInDb && contentAccessInDb.length) {
-                        contentAccessDbModel.status = contentAccessInDb[0][ContentAccessEntry.COLUMN_NAME_STATUS];
-                        return this.dbService.update({
-                            table: ContentAccessEntry.TABLE_NAME,
-                            selection:
-                                `${ContentAccessEntry.COLUMN_NAME_UID}= ? AND ${ContentAccessEntry
-                                    .COLUMN_NAME_CONTENT_IDENTIFIER}= ?`,
-                            selectionArgs: [uid, contentAccess.contentId],
-                            modelJson: contentAccessDbModel
-                        }).map(v => v > 0);
-                    } else {
-                        return this.dbService.insert({
-                            table: ContentAccessEntry.TABLE_NAME,
-                            modelJson: contentAccessDbModel
-                        }).map(v => v > 0);
-                    }
-                });
-            });
-
-
+                }).pipe(
+                    mergeMap((contentAccessInDb: ContentAccessEntry.SchemaMap[]) => {
+                        const contentAccessDbModel: ContentAccessEntry.SchemaMap = {
+                            uid: uid,
+                            identifier: contentAccess.contentId,
+                            epoch_timestamp: Date.now(),
+                            status: ContentAccessStatus.PLAYED.valueOf(),
+                            content_type: contentAccess.contentType.toLowerCase(),
+                            learner_state: contentAccess.contentLearnerState! &&
+                                JSON.stringify(contentAccess.contentLearnerState!.learnerState)
+                        };
+                        if (contentAccessInDb && contentAccessInDb.length) {
+                            contentAccessDbModel.status = contentAccessInDb[0][ContentAccessEntry.COLUMN_NAME_STATUS];
+                            return this.dbService.update({
+                                table: ContentAccessEntry.TABLE_NAME,
+                                selection:
+                                    `${ContentAccessEntry.COLUMN_NAME_UID}= ? AND ${ContentAccessEntry
+                                        .COLUMN_NAME_CONTENT_IDENTIFIER}= ?`,
+                                selectionArgs: [uid, contentAccess.contentId],
+                                modelJson: contentAccessDbModel
+                            }).pipe(
+                                map(v => v > 0)
+                            );
+                        } else {
+                            return this.dbService.insert({
+                                table: ContentAccessEntry.TABLE_NAME,
+                                modelJson: contentAccessDbModel
+                            }).pipe(
+                                map(v => v > 0)
+                            );
+                        }
+                    })
+                );
+            })
+        );
     }
 
     exportProfile(profileExportRequest: ProfileExportRequest): Observable<ProfileExportResponse> {
@@ -479,7 +609,7 @@ export class ProfileServiceImpl implements ProfileService {
             groupIds: profileExportRequest.groupIds!
         };
 
-        return Observable.fromPromise(
+        return from(
             new GetEparFilePath(this.fileService).execute(exportProfileContext).then((exportResponse: Response) => {
                 return new CopyDatabase(this.dbService).execute(exportResponse.body);
             }).then((exportResponse: Response) => {
@@ -487,7 +617,8 @@ export class ProfileServiceImpl implements ProfileService {
                 return new CreateMetaData(this.dbService, this.fileService, this.deviceInfo).execute(exportResponse.body);
             }).then((exportResponse: Response) => {
                 const response: ProfileExportResponse = {exportedFilePath: ''};
-                return new CleanupExportedFile(this.dbService, this.fileService).execute(exportResponse.body);
+                return new CleanupExportedFile(this.dbService, this.fileService).execute(exportResponse.body)
+                    .catch(() => exportResponse);
             }).then((exportResponse: Response) => {
                 return new GenerateProfileExportTelemetry(this.dbService).execute(exportResponse.body);
             }).then((exportResponse: Response<ExportProfileContext>) => {
@@ -500,9 +631,11 @@ export class ProfileServiceImpl implements ProfileService {
             sourceDBFilePath: profileImportRequest.sourceFilePath,
 
         };
-        return Observable.fromPromise(
+        return from(
             new ValidateProfileMetadata(this.dbService).execute(importProfileContext).then((importResponse: Response) => {
                 return new TransportUser(this.dbService).execute(importResponse.body);
+            }).then((importResponse: Response) => {
+                return new TransportProfiles(this.dbService).execute(importResponse.body);
             }).then((importResponse: Response) => {
                 return new TransportGroup(this.dbService).execute(importResponse.body);
             }).then((importResponse: Response) => {
@@ -519,4 +652,142 @@ export class ProfileServiceImpl implements ProfileService {
                 return {failed: importResponse.body.failed!, imported: importResponse.body.imported!};
             }));
     }
+
+    mergeServerProfiles(mergeServerProfilesRequest: MergeServerProfilesRequest): Observable<undefined> {
+        const apiRequest = new Request.Builder()
+            .withType(HttpRequestType.PATCH)
+            .withPath(ProfileServiceImpl.MERGE_SERVER_PROFILES_PATH)
+            .withBearerToken(true)
+            .withHeaders({
+                'x-source-user-token': mergeServerProfilesRequest.from.accessToken,
+                'x-authenticated-user-token': mergeServerProfilesRequest.to.accessToken
+            })
+            .withBody({
+                request: {
+                    fromAccountId: mergeServerProfilesRequest.from.userId,
+                    toAccountId: mergeServerProfilesRequest.to.userId
+                }
+            })
+            .build();
+
+        return this.apiService.fetch(apiRequest).pipe(
+            map((res) => {
+                console.log(res);
+                return undefined;
+            }),
+            finalize(() => {
+                const launchUrl = this.sdkConfig.apiConfig.user_authentication.mergeUserHost +
+                    this.sdkConfig.apiConfig.user_authentication.authUrl + '/logout' + '?redirect_uri=' +
+                    this.sdkConfig.apiConfig.host + '/oauth2callback';
+
+                const inAppBrowserRef = cordova.InAppBrowser.open(launchUrl, '_blank', 'zoom=no,hidden=yes');
+
+                inAppBrowserRef.addEventListener('loadstart', async (event) => {
+                    if ((<string> event.url).indexOf('/oauth2callback') > -1) {
+                        inAppBrowserRef.close();
+                    }
+                });
+            })
+        );
+    }
+
+    isDefaultChannelProfile(): Observable<boolean> {
+        return zip(
+            this.frameworkService.getDefaultChannelId(),
+            this.frameworkService.getActiveChannelId()
+        ).pipe(
+            map((results) => {
+                return results[0] === results[1];
+            })
+        );
+    }
+
+    getUserFeed(): Observable<UserFeedEntry[]> {
+        return this.getActiveProfileSession().pipe(
+            mergeMap((session) => {
+                return this.userService.getUserFeed(session.managedSession ? session.managedSession.uid : session.uid, {
+                    apiPath: this.sdkConfig.profileServiceConfig.profileApiPath
+                });
+            })
+        );
+    }
+
+    updateUserFeedEntry(updateUserFeedRequest: UpdateUserFeedRequest): Observable<boolean> {
+        return this.getActiveProfileSession().pipe(
+            mergeMap((session) => {
+                return this.userService.updateUserFeedEntry(
+                    session.managedSession ? session.managedSession.uid : session.uid,
+                    updateUserFeedRequest.feedEntryId,
+                    updateUserFeedRequest.category,
+                    updateUserFeedRequest.request,
+                    {
+                        apiPath: this.sdkConfig.profileServiceConfig.profileApiPath
+                    }
+                ).pipe(
+                    mapTo(true),
+                    catchError(() => of(false))
+                );
+            })
+        );
+    }
+
+    deleteUserFeedEntry(deleteUserFeedRequest: DeleteUserFeedRequest): Observable<boolean> {
+        return this.getActiveProfileSession().pipe(
+            mergeMap((session) => {
+                return this.userService.deleteUserFeedEntry(
+                    session.managedSession ? session.managedSession.uid : session.uid,
+                    deleteUserFeedRequest.feedEntryId,
+                    deleteUserFeedRequest.category,
+                    {
+                        apiPath: this.sdkConfig.profileServiceConfig.profileApiPath
+                    }
+                ).pipe(
+                    mapTo(true),
+                    catchError(() => of(false))
+                );
+            })
+        );
+    }
+
+    userMigrate(userMigrateRequest: UserMigrateRequest): Observable<UserMigrateResponse> {
+        return new UserMigrateHandler(this.sdkConfig, this.apiService)
+            .handle(userMigrateRequest);
+    }
+
+    updateServerProfileDeclarations(request: UpdateServerProfileDeclarationsRequest): Observable<UpdateServerProfileDeclarationsResponse> {
+        return this.userService.updateUserDeclarations(request.declarations, {apiPath: this.sdkConfig.profileServiceConfig.profileApiPath});
+    }
+
+    getConsent(userConsent: Consent): Observable<ReadConsentResponse> {
+        return this.userService.getConsent(userConsent, { apiPath : '/api/user/v1'});
+    }
+
+    updateConsent(userConsent: Consent): Observable<UpdateConsentResponse> {
+        return this.userService.updateConsent(userConsent, { apiPath : '/api/user/v1'});
+    }
+
+    private mapDbProfileEntriesToProfiles(profiles: ProfileEntry.SchemaMap[]): Profile[] {
+        return profiles.map((profile: ProfileEntry.SchemaMap) => ProfileDbEntryMapper.mapProfileDBEntryToProfile(profile));
+    }
+
+    private async generateSessionStartTelemetry() {
+        return TelemetryLogger.log.start({
+            type: 'session', env: 'sdk'
+        }).toPromise();
+    }
+
+    private async generateSessionEndTelemetry() {
+        const sessionString = await this.sharedPreferences.getString(ProfileServiceImpl.KEY_USER_SESSION).toPromise();
+
+        if (sessionString) {
+            const profileSession = JSON.parse(sessionString);
+
+            await TelemetryLogger.log.end({
+                type: 'session',
+                env: 'sdk',
+                duration: Math.floor((Date.now() - profileSession.createdTime) / 1000)
+            }).toPromise();
+        }
+    }
 }
+

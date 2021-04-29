@@ -46,10 +46,15 @@ export declare enum InteractType {
     OTHER = "OTHER"
 }
 export declare enum InteractSubType {
+    NETWORK_SPEED = "network-speed",
     SUBTYPE_SPINE = "spine",
     ONLINE = "online",
     FULL = "full",
-    CONTENT_VARIANT = "content-variant-download"
+    CONTENT_VARIANT = "content-variant-download",
+    DEVICE_TIME_OFFSET_FOUND = "device-time-offset-found",
+    CONTENT_DOWNLOAD_INITIATE = "ContentDownload-Initiate",
+    CONTENT_DOWNLOAD_SUCCESS = "ContentDownload-Success",
+    CONTENT_DOWNLOAD_CANCEL = "ContentDownload-Cancel"
 }
 export declare enum TelemetryErrorCode {
     ERR_DOWNLOAD_FAILED = "ERR_DOWNLOAD_FAILED"

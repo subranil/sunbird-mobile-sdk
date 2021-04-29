@@ -1,5 +1,4 @@
 import { CachedItemRequest } from '../../key-value-store';
-// import { CachedItemRequest } from "src/key-value-store";
 
 export interface PageAssembleFilter {
     subject?: Array<string>;
@@ -10,21 +9,37 @@ export interface PageAssembleFilter {
     language?: Array<string>;
     concepts?: Array<string>;
     contentType?: Array<string>;
+    primaryCategory?: Array<string>;
     ageGroup?: Array<string>;
     ownership?: Array<string>;
     dialcodes?: string;
+    'batches.createdFor'?: string[];
 }
 
+export interface PageAssembleProfile {
+    board: string[];
+}
+export interface SetPageAssembleChannelRequest {
+    channelId: string;
+}
 
 export interface PageAssembleCriteria extends CachedItemRequest {
+    organisationId?: string;
     name: PageName;
     source?: 'app' | 'web';
     mode?: 'soft' | 'hard';
     filters?: PageAssembleFilter;
+    userProfile?: PageAssembleProfile;
+    sections?: {
+        [sectionId: string]: {
+            filters?: PageAssembleFilter
+        }
+    };
 }
 
 export enum PageName {
     RESOURCE = 'Resource',
     COURSE = 'Course',
-    DIAL_CODE = 'DIAL Code Consumption'
+    ANONYMOUS_COURSE = 'AnonymousCourse',
+    DIAL_CODE = 'DIAL Code Consumption',
 }

@@ -1,6 +1,6 @@
-import { SearchType } from '..';
+import { ContentData, SearchType } from '..';
 import { Content, HierarchyInfo } from './content';
-import { CorrelationData } from '../../telemetry';
+import { CorrelationData, Rollup } from '../../telemetry';
 import { ContentImportResponse } from './response';
 import { ContentEntry } from '../db/schema';
 import { DownloadRequest } from '../../util/download';
@@ -12,6 +12,7 @@ export interface ContentDecorateRequest {
 }
 export interface ContentDetailRequest {
     contentId: string;
+    emitUpdateIfAny?: boolean;
     attachFeedback?: boolean;
     attachContentAccess?: boolean;
     attachContentMarker?: boolean;
@@ -30,6 +31,9 @@ export interface ContentRequest {
     localOnly?: boolean;
     resourcesOnly?: boolean;
     limit?: number;
+    board?: string[];
+    medium?: string[];
+    grade?: string[];
 }
 export interface ContentSortCriteria {
     sortAttribute: string;
@@ -56,20 +60,26 @@ export interface EcarImportRequest {
     destinationFolder: string;
     sourceFilePath: string;
     correlationData: CorrelationData[];
+    rollUp?: Rollup;
+    identifier?: string;
 }
 export interface ContentImportRequest {
+    withPriority?: number;
     contentImportArray: ContentImport[];
     contentStatusArray: string[];
+    fields?: (keyof ContentData)[];
 }
 export interface ContentImport {
     isChildContent: boolean;
     destinationFolder: string;
     contentId: string;
     correlationData?: CorrelationData[];
+    rollUp?: Rollup;
 }
 export interface ContentExportRequest {
     destinationFolder: string;
     contentIds: string[];
+    saveLocally?: boolean;
 }
 export interface ContentMarkerRequest {
     contentId: string;
@@ -119,6 +129,9 @@ export interface ContentSearchCriteria {
     searchType?: SearchType;
     framework?: string;
     languageCode?: string;
+    mimeType?: string[];
+    subject?: string[];
+    fields?: string[];
 }
 export interface ContentSearchFilter {
     name: string;
@@ -147,6 +160,14 @@ export interface ImportContentContext {
     identifiers?: string[];
     contentImportResponseList: ContentImportResponse[];
     tmpLocation?: string;
+    rootIdentifier?: string;
+    correlationData?: CorrelationData[];
+    rollUp?: Rollup;
+    existedContentIdentifiers?: {
+        [identifier: string]: boolean;
+    };
+    contentIdsToDelete: Set<string>;
+    identifier?: string;
 }
 export interface ExportContentContext {
     ecarFilePath?: string;
@@ -160,12 +181,22 @@ export interface ExportContentContext {
     manifest?: any;
 }
 export interface ContentDownloadRequest extends DownloadRequest {
+    contentMeta: Partial<Content>;
     isChildContent?: boolean;
     correlationData?: CorrelationData[];
+    rollUp?: Rollup;
 }
 export interface RelevantContentRequest extends DownloadRequest {
     hierarchyInfo?: HierarchyInfo[];
     contentIdentifier?: string;
     next?: boolean;
     prev?: boolean;
+    shouldConvertBasePath?: boolean;
+}
+export interface ContentSpaceUsageSummaryRequest {
+    paths: string[];
+}
+export interface ContentSpaceUsageSummaryResponse {
+    path: string;
+    sizeOnDevice: number;
 }

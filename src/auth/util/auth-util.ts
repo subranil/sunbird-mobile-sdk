@@ -1,12 +1,18 @@
-import {ApiConfig, ApiService, HttpRequestType, HttpSerializer, JWTUtil, Request, Response} from '../../api';
+import {ApiConfig, ApiService, HttpClientError, HttpRequestType, HttpSerializer, JWTUtil, Request, Response, ResponseCode} from '../../api';
 import {OAuthSession} from '..';
 import {AuthKeys} from '../../preference-keys';
 import {NoActiveSessionError} from '../../profile';
-import {AuthEndPoints} from '../def/auth-end-points';
 import {SharedPreferences} from '../../util/shared-preferences';
+import {AuthTokenRefreshErrorEvent, ErrorEventType, EventNamespace, EventsBusService} from '../../events-bus';
+import {AuthTokenRefreshError} from '../errors/auth-token-refresh-error';
 
 export class AuthUtil {
-    constructor(private apiConfig: ApiConfig, private apiService: ApiService, private sharedPreferences: SharedPreferences) {
+    constructor(
+        private apiConfig: ApiConfig,
+        private apiService: ApiService,
+        private sharedPreferences: SharedPreferences,
+        private eventsBusService: EventsBusService
+    ) {
     }
 
     public async refreshSession(): Promise<void> {
@@ -17,27 +23,58 @@ export class AuthUtil {
         }
 
         const request = new Request.Builder()
-            .withPath(this.apiConfig.user_authentication.authUrl + AuthEndPoints.REFRESH)
+            .withPath('/auth/v1/refresh/token')
             .withType(HttpRequestType.POST)
             .withSerializer(HttpSerializer.URLENCODED)
+            .withBearerToken(true)
             .withBody({
-                refresh_token: sessionData.refresh_token,
-                grant_type: 'refresh_token',
-                client_id: 'android'
+                refresh_token: sessionData.refresh_token
             })
             .build();
 
 
-        const response: Response = await this.apiService.fetch(request).toPromise();
+        try {
+            await this.apiService.fetch(request).toPromise()
+                .catch((e) => {
+                    if (HttpClientError.isInstance(e) && e.response.responseCode === ResponseCode.HTTP_BAD_REQUEST) {
+                        throw new AuthTokenRefreshError(e.message);
+                    }
 
-        sessionData = {
-            ...response.body,
-            userToken: JWTUtil.parseUserTokenFromAccessToken(response.body.access_token)
-        };
+                    throw e;
+                })
+                .then(async (response: Response) => {
+                    if (response.body.result.access_token && response.body.result.refresh_token) {
+                        const jwtPayload: { sub: string, exp: number } = JWTUtil.getJWTPayload(response.body.result.access_token);
 
-        await this.startSession(sessionData!);
+                        const userToken = jwtPayload.sub.split(':').length === 3 ? <string> jwtPayload.sub.split(':').pop() : jwtPayload.sub;
 
-        return;
+                        const prevSessionData = await this.getSessionData();
+
+                        sessionData = {
+                            ...response.body.result,
+                            userToken: prevSessionData ? prevSessionData.userToken : userToken,
+                            managed_access_token: prevSessionData ? prevSessionData.managed_access_token : undefined,
+                            accessTokenExpiresOn: jwtPayload.exp * 1000
+                        };
+
+                        return await this.sharedPreferences.putString(AuthKeys.KEY_OAUTH_SESSION, JSON.stringify(sessionData)).toPromise();
+                    }
+
+                    throw new AuthTokenRefreshError('No token found in server response');
+                });
+        } catch (e) {
+            if (e instanceof AuthTokenRefreshError) {
+                this.eventsBusService.emit({
+                    namespace: EventNamespace.ERROR,
+                    event: {
+                        type: ErrorEventType.AUTH_TOKEN_REFRESH_ERROR,
+                        payload: e
+                    } as AuthTokenRefreshErrorEvent
+                });
+            }
+
+            throw e;
+        }
     }
 
     public async startSession(sessionData: OAuthSession): Promise<void> {
@@ -45,27 +82,7 @@ export class AuthUtil {
     }
 
     public async endSession(): Promise<void> {
-        return new Promise<void>(((resolve, reject) => {
-            const launchUrl = this.apiConfig.host +
-                this.apiConfig.user_authentication.authUrl + AuthEndPoints.LOGOUT + '?redirect_uri=' +
-                this.apiConfig.user_authentication.redirectUrl;
-
-            customtabs.isAvailable(() => {
-                customtabs.launch(launchUrl!!, async () => {
-                    await this.sharedPreferences.putString(AuthKeys.KEY_OAUTH_SESSION, '').toPromise();
-                    resolve();
-                }, error => {
-                    reject(error);
-                });
-            }, error => {
-                customtabs.launchInBrowser(launchUrl!!, async () => {
-                    await this.sharedPreferences.putString(AuthKeys.KEY_OAUTH_SESSION, '').toPromise();
-                    resolve();
-                }, err => {
-                    reject(err);
-                });
-            });
-        }));
+        await this.sharedPreferences.putString(AuthKeys.KEY_OAUTH_SESSION, '').toPromise();
     }
 
     public async getSessionData(): Promise<OAuthSession | undefined> {

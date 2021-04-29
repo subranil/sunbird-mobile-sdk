@@ -1,7 +1,7 @@
 import {ApiRequestHandler, ApiService, HttpRequestType, Request} from '../../api';
-import {VerifyOtpRequest} from '..';
-import {ProfileServiceConfig} from '..';
+import {ProfileServiceConfig, VerifyOtpRequest} from '..';
 import {Observable} from 'rxjs';
+import {map} from 'rxjs/operators';
 
 export class VerifyOtpHandler implements ApiRequestHandler<VerifyOtpRequest, boolean> {
     private readonly GET_VERIFY_OTP_ENDPOINT = '/verify';
@@ -14,8 +14,8 @@ export class VerifyOtpHandler implements ApiRequestHandler<VerifyOtpRequest, boo
         const apiRequest: Request = new Request.Builder()
             .withType(HttpRequestType.POST)
             .withPath(this.optServiceConfig.otpApiPath + this.GET_VERIFY_OTP_ENDPOINT)
-            .withApiToken(true)
-            .withSessionToken(true)
+            .withBearerToken(true)
+            .withUserToken(true)
             .withBody({
                 request: {
                     key: request.key,
@@ -25,9 +25,11 @@ export class VerifyOtpHandler implements ApiRequestHandler<VerifyOtpRequest, boo
             })
             .build();
 
-        return this.apiService.fetch<{ result: { response: string } }>(apiRequest).map((success) => {
-            return success.body.result.response === 'SUCCESS';
-        });
+        return this.apiService.fetch<{ result: { response: string } }>(apiRequest).pipe(
+            map((success) => {
+                return success.body.result.response === 'SUCCESS';
+            })
+        );
     }
 
 }

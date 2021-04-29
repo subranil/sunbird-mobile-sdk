@@ -1,27 +1,51 @@
-import {ApiService, HttpRequestType, Request} from '../../api';
-import {CourseServiceConfig, GetContentStateRequest} from '..';
-import {Observable} from 'rxjs';
+import {ApiService} from '../../api';
+import {ContentState, CourseServiceConfig, GetContentStateRequest} from '..';
+import {defer, iif, Observable} from 'rxjs';
+import {map} from 'rxjs/operators';
+import {ContentService} from '../../content';
+import {Container} from 'inversify';
+import {CsInjectionTokens, InjectionTokens} from '../../injection-tokens';
+import {CsCourseService} from '@project-sunbird/client-services/services/course';
 
 export class GetContentStateHandler {
-    private readonly GET_CONTENT_STATE_KEY_PREFIX = 'getContentState';
-    private readonly GET_CONTENT_STATE_ENDPOINT = '/content/state/read';
-
-    constructor(private apiService: ApiService,
-                private courseServiceConfig: CourseServiceConfig) {
-
+    constructor(
+        private apiService: ApiService,
+        private courseServiceConfig: CourseServiceConfig,
+        private container: Container
+    ) {
     }
 
-    public handle(contentStateRequest: GetContentStateRequest): Observable<any> {
-        const apiRequest: Request = new Request.Builder()
-            .withType(HttpRequestType.POST)
-            .withPath(this.courseServiceConfig.apiPath + this.GET_CONTENT_STATE_ENDPOINT)
-            .withApiToken(true)
-            .withSessionToken(true)
-            .withBody({request: contentStateRequest})
-            .build();
+    private get csCourseService(): CsCourseService {
+        return this.container.get(CsInjectionTokens.COURSE_SERVICE);
+    }
 
-        return this.apiService.fetch<any>(apiRequest).map((response) => {
-            return response.body;
-        });
+    private get contentService(): ContentService {
+        return this.container.get(InjectionTokens.CONTENT_SERVICE);
+    }
+
+    public handle(contentStateRequest: GetContentStateRequest): Observable<{ contentList: ContentState[] }> {
+        delete contentStateRequest['returnRefreshedContentStates'];
+
+        return iif(
+            () => !contentStateRequest.contentIds || !contentStateRequest.contentIds.length,
+            defer(async () => {
+                contentStateRequest.contentIds = await this.contentService.getContentDetails({
+                    contentId: contentStateRequest.courseId
+                }).toPromise().then((content) => content.contentData['leafNodes'] || []);
+
+                return this.fetchFromApi(contentStateRequest).toPromise();
+            }),
+            defer(() => this.fetchFromApi(contentStateRequest))
+        );
+    }
+
+    private fetchFromApi(contentStateRequest: GetContentStateRequest) {
+        if (contentStateRequest.contentIds && !contentStateRequest.contentIds.length) {
+            delete contentStateRequest.contentIds;
+        }
+
+        return this.csCourseService.getContentState(contentStateRequest).pipe(
+            map((contentStates: ContentState[]) => ({ contentList: contentStates }))
+        );
     }
 }

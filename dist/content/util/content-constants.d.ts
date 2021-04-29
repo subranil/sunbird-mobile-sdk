@@ -17,6 +17,10 @@ export declare enum MimeType {
     ECML = "application/vnd.ekstep.ecml-archive",
     HTML = "application/vnd.ekstep.html-archive",
     COLLECTION = "application/vnd.ekstep.content-collection",
+    H5P = "application/vnd.ekstep.h5p-archive",
+    VIDEO = "video/mp4",
+    YOUTUBE = "video/x-youtube",
+    WEBM = "video/webm",
     ZIP = "application/zip",
     TXT = "text/plain",
     ECAR = "application/ecar",
@@ -79,4 +83,7 @@ export declare enum ContentErrorCode {
 export declare enum ErrorCode {
     EXPORT_FAILED = "EXPORT_FAILED",
     IMPORT_FAILED = "IMPORT_FAILED"
+}
+export declare enum FileName {
+    MANIFEST = "manifest.json"
 }

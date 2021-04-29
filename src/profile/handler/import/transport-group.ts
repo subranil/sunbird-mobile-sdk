@@ -1,8 +1,7 @@
 import {DbService} from '../../../db';
 import {ImportProfileContext} from '../../def/import-profile-context';
-import {ProfileEntry} from '../../db/schema';
 import {Response} from '../../../api';
-import {GroupEntry} from '../../../group/db/schema';
+import {GroupEntry} from '../../../group-deprecated/db/schema';
 
 export class TransportGroup {
     constructor(private dbService: DbService) {
@@ -38,7 +37,7 @@ export class TransportGroup {
                 await this.dbService.insert({
                     table: GroupEntry.TABLE_NAME,
                     modelJson: group
-                });
+                }).toPromise();
                 imported++;
 
             } else {

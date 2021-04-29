@@ -23,6 +23,12 @@ export namespace ContentEntry {
     export const COLUMN_NAME_PRAGMA = 'pragma';   // external, ads
     export const COLUMN_NAME_UID = 'uid';   // list of comma separated uid
     export const COLUMN_NAME_SIZE_ON_DEVICE = 'size_on_device';   // list of comma separated uid
+    export const COLUMN_NAME_BOARD = 'board';
+    export const COLUMN_NAME_MEDIUM = 'medium';
+    export const COLUMN_NAME_GRADE = 'grade';
+    export const COLUMN_NAME_DIALCODES = 'dialcodes';
+    export const COLUMN_NAME_CHILD_NODES = 'child_nodes';
+    export const COLUMN_NAME_PRIMARY_CATEGORY = 'primary_category';
 
     export interface SchemaMap {
         [COLUMN_NAME_IDENTIFIER]: string;
@@ -41,6 +47,12 @@ export namespace ContentEntry {
         [COLUMN_NAME_AUDIENCE]?: string;
         [COLUMN_NAME_PRAGMA]?: string;
         [COLUMN_NAME_SIZE_ON_DEVICE]?: number;
+        [COLUMN_NAME_BOARD]?: string;
+        [COLUMN_NAME_MEDIUM]?: string;
+        [COLUMN_NAME_GRADE]?: string;
+        [COLUMN_NAME_DIALCODES]?: string;
+        [COLUMN_NAME_CHILD_NODES]?: string;
+        [COLUMN_NAME_PRIMARY_CATEGORY]: string;
     }
 
     export const getCreateEntry: (() => string) = () => {
@@ -61,7 +73,13 @@ export namespace ContentEntry {
             COLUMN_NAME_AUDIENCE + DbConstants.SPACE + DbConstants.TEXT_TYPE + ' DEFAULT \'Learner\'' + DbConstants.COMMA_SEP +
             COLUMN_NAME_SIZE_ON_DEVICE + DbConstants.SPACE + DbConstants.INT_TYPE + ' NOT NULL DEFAULT 0' + DbConstants.COMMA_SEP +
             COLUMN_NAME_PRAGMA + DbConstants.SPACE + DbConstants.TEXT_TYPE + '  DEFAULT \'\'' + DbConstants.COMMA_SEP +
-            COLUMN_NAME_MANIFEST_VERSION + DbConstants.SPACE + DbConstants.TEXT_TYPE +
+            COLUMN_NAME_BOARD + DbConstants.SPACE + DbConstants.TEXT_TYPE + '  DEFAULT \'\'' + DbConstants.COMMA_SEP +
+            COLUMN_NAME_MEDIUM + DbConstants.SPACE + DbConstants.TEXT_TYPE + '  DEFAULT \'\'' + DbConstants.COMMA_SEP +
+            COLUMN_NAME_GRADE + DbConstants.SPACE + DbConstants.TEXT_TYPE + '  DEFAULT \'\'' + DbConstants.COMMA_SEP +
+            COLUMN_NAME_MANIFEST_VERSION + DbConstants.SPACE + DbConstants.TEXT_TYPE + DbConstants.COMMA_SEP +
+            COLUMN_NAME_DIALCODES + DbConstants.SPACE + DbConstants.TEXT_TYPE + '  DEFAULT \'\'' + DbConstants.COMMA_SEP +
+            COLUMN_NAME_CHILD_NODES + DbConstants.SPACE + DbConstants.TEXT_TYPE + '  DEFAULT \'\'' + DbConstants.COMMA_SEP +
+            COLUMN_NAME_PRIMARY_CATEGORY + DbConstants.SPACE + DbConstants.TEXT_TYPE + '  DEFAULT \'\'' +
             ' )';
     };
 
@@ -77,6 +95,30 @@ export namespace ContentEntry {
         return 'ALTER TABLE ' + TABLE_NAME + ' ADD COLUMN ' + COLUMN_NAME_PRAGMA + DbConstants.TEXT_TYPE + ' DEFAULT \'\';';
     };
 
+
+    export const getAlterEntryForBoard: (() => string) = () => {
+        return `ALTER TABLE ${TABLE_NAME} ADD COLUMN ${COLUMN_NAME_BOARD} TEXT DEFAULT ''`;
+    };
+
+    export const getAlterEntryForMedium: (() => string) = () => {
+        return `ALTER TABLE ${TABLE_NAME} ADD COLUMN ${COLUMN_NAME_MEDIUM} TEXT DEFAULT ''`;
+    };
+
+    export const getAlterEntryForGrade: (() => string) = () => {
+        return `ALTER TABLE ${TABLE_NAME} ADD COLUMN ${COLUMN_NAME_GRADE} TEXT DEFAULT ''`;
+    };
+
+    export const getAlterEntryForDialCode: (() => string) = () => {
+        return `ALTER TABLE ${TABLE_NAME} ADD COLUMN ${COLUMN_NAME_DIALCODES} TEXT DEFAULT ''`;
+    };
+
+    export const getAlterEntryForChildNodes: (() => string) = () => {
+        return `ALTER TABLE ${TABLE_NAME} ADD COLUMN ${COLUMN_NAME_CHILD_NODES} TEXT DEFAULT ''`;
+    };
+
+    export const getAlterEntryForPrimaryCategory: (() => string) = () => {
+        return `ALTER TABLE ${TABLE_NAME} ADD COLUMN ${COLUMN_NAME_PRIMARY_CATEGORY} TEXT DEFAULT ''`;
+    };
 }
 
 export namespace ContentAccessEntry {
@@ -89,6 +131,7 @@ export namespace ContentAccessEntry {
     export const COLUMN_NAME_STATUS = 'status'; // viewed = 1, partiallyPlayed = 2, fullyPlayed = 3
     export const COLUMN_NAME_CONTENT_TYPE = 'content_type';
     export const COLUMN_NAME_LEARNER_STATE = 'learner_state';
+    export const COLUMN_NAME_PRIMARY_CATEGORY = 'primary_category';
 
     export interface SchemaMap {
         [COLUMN_NAME_UID]: string;
@@ -99,22 +142,24 @@ export namespace ContentAccessEntry {
         [COLUMN_NAME_LEARNER_STATE]: string;
     }
 
-
     export const getCreateEntry: (() => string) = () => {
         return 'CREATE TABLE IF NOT EXISTS ' + TABLE_NAME + ' (' +
             _ID + ' INTEGER PRIMARY KEY,' +
             COLUMN_NAME_UID + DbConstants.SPACE + DbConstants.TEXT_TYPE + ' NOT NULL' + DbConstants.COMMA_SEP +
-            COLUMN_NAME_CONTENT_IDENTIFIER +  DbConstants.SPACE + DbConstants.TEXT_TYPE + DbConstants.COMMA_SEP +
-            COLUMN_NAME_EPOCH_TIMESTAMP +  DbConstants.SPACE + DbConstants.INT_TYPE + DbConstants.COMMA_SEP +
-            COLUMN_NAME_STATUS +  DbConstants.SPACE + DbConstants.INT_TYPE + DbConstants.COMMA_SEP +
-            COLUMN_NAME_CONTENT_TYPE +  DbConstants.SPACE + DbConstants.TEXT_TYPE + DbConstants.COMMA_SEP +
-            COLUMN_NAME_LEARNER_STATE +  DbConstants.SPACE + DbConstants.BLOB_TYPE +
+            COLUMN_NAME_CONTENT_IDENTIFIER + DbConstants.SPACE + DbConstants.TEXT_TYPE + DbConstants.COMMA_SEP +
+            COLUMN_NAME_EPOCH_TIMESTAMP + DbConstants.SPACE + DbConstants.INT_TYPE + DbConstants.COMMA_SEP +
+            COLUMN_NAME_STATUS + DbConstants.SPACE + DbConstants.INT_TYPE + DbConstants.COMMA_SEP +
+            COLUMN_NAME_CONTENT_TYPE + DbConstants.SPACE + DbConstants.TEXT_TYPE + DbConstants.COMMA_SEP +
+            COLUMN_NAME_LEARNER_STATE + DbConstants.SPACE + DbConstants.BLOB_TYPE +
             ' )';
     };
 
     export const deleteTable: (() => string) = () => {
         return 'DROP TABLE IF EXISTS ' + TABLE_NAME;
+    };
 
+    export const getAlterEntryForPrimaryCategory: (() => string) = () => {
+        return `ALTER TABLE ${TABLE_NAME} ADD COLUMN ${COLUMN_NAME_PRIMARY_CATEGORY} TEXT DEFAULT ''`;
     };
 }
 
@@ -136,7 +181,6 @@ export namespace ContentFeedbackEntry {
         [COLUMN_NAME_CREATED_AT]: number;
     }
 
-
     export const getCreateEntry: (() => string) = () => {
         return 'CREATE TABLE IF NOT EXISTS ' + TABLE_NAME + ' (' +
             _ID + ' INTEGER PRIMARY KEY,' +
@@ -150,7 +194,6 @@ export namespace ContentFeedbackEntry {
 
     export const deleteTable: (() => string) = () => {
         return 'DROP TABLE IF EXISTS ' + TABLE_NAME;
-
     };
 }
 
@@ -165,6 +208,7 @@ export namespace ContentMarkerEntry {
     export const COLUMN_NAME_DATA = 'data';
     export const COLUMN_NAME_EXTRA_INFO = 'extra_info';
     export const COLUMN_NAME_MARKER = 'marker';
+    export const COLUMN_NAME_MIME_TYPE = 'mime_type';
 
     export interface SchemaMap {
         [COLUMN_NAME_UID]: string;
@@ -173,6 +217,7 @@ export namespace ContentMarkerEntry {
         [COLUMN_NAME_DATA]: string;
         [COLUMN_NAME_EXTRA_INFO]: string;
         [COLUMN_NAME_MARKER]: number;
+        [COLUMN_NAME_MIME_TYPE]: string;
     }
 
     export const getCreateEntry: (() => string) = () => {
@@ -183,12 +228,16 @@ export namespace ContentMarkerEntry {
             COLUMN_NAME_EPOCH_TIMESTAMP + DbConstants.SPACE + DbConstants.INT_TYPE + DbConstants.COMMA_SEP +
             COLUMN_NAME_DATA + DbConstants.SPACE + DbConstants.TEXT_TYPE + DbConstants.COMMA_SEP +
             COLUMN_NAME_EXTRA_INFO + DbConstants.SPACE + DbConstants.TEXT_TYPE + DbConstants.COMMA_SEP +
+            COLUMN_NAME_MIME_TYPE + DbConstants.SPACE + DbConstants.TEXT_TYPE + '  DEFAULT \'\'' + DbConstants.COMMA_SEP +
             COLUMN_NAME_MARKER + DbConstants.SPACE + DbConstants.INT_TYPE +
             ' )';
     };
 
     export const deleteTable: (() => string) = () => {
         return 'DROP TABLE IF EXISTS ' + TABLE_NAME;
+    };
 
+    export const getAlterEntryForMimeType: (() => string) = () => {
+        return `ALTER TABLE ${TABLE_NAME} ADD COLUMN ${COLUMN_NAME_MIME_TYPE} TEXT DEFAULT ''`;
     };
 }

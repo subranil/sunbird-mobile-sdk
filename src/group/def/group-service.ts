@@ -1,31 +1,67 @@
-import {Group} from './group';
 import {Observable} from 'rxjs';
-import {GetAllGroupRequest} from './get-all-group-request';
-import {ProfilesToGroupRequest} from './profiles-to-group-request';
-import {GroupSession} from './group-session';
-import {TelemetryService} from '../../telemetry';
-
-
+import {Group} from './models';
+import {
+    AddActivitiesRequest,
+    AddMembersRequest,
+    DeleteByIdRequest,
+    GetByIdRequest,
+    GroupCreateRequest,
+    GroupSearchCriteria,
+    RemoveActivitiesRequest,
+    RemoveMembersRequest,
+    UpdateActivitiesRequest,
+    UpdateByIdRequest,
+    UpdateMembersRequest,
+    ActivateAndDeactivateByIdRequest
+} from './requests';
+import {
+    GroupAddActivitiesResponse,
+    GroupAddMembersResponse,
+    GroupCreateResponse,
+    GroupDeleteResponse,
+    GroupReactivateResponse,
+    GroupRemoveActivitiesResponse,
+    GroupRemoveMembersResponse,
+    GroupSearchResponse,
+    GroupSupportedActivitiesFormField,
+    GroupSuspendResponse,
+    GroupUpdateActivitiesResponse,
+    GroupUpdateMembersResponse,
+    GroupUpdateResponse
+} from './responses';
+import {GroupActivityService} from './group-activity-service';
+import {Form} from '../../form/def/models';
+import { CsGroupUpdateGroupGuidelinesRequest, CsGroupUpdateGroupGuidelinesResponse } from '@project-sunbird/client-services/services/group';
 export interface GroupService {
+    activityService: GroupActivityService;
 
-    createGroup(group: Group): Observable<Group>;
+    create(request: GroupCreateRequest): Observable<GroupCreateResponse>;
 
-    deleteGroup(gid: string): Observable<undefined>;
+    getById(request: GetByIdRequest): Observable<Group>;
 
-    updateGroup(group: Group): Observable<Group>;
+    search(request: GroupSearchCriteria): Observable<GroupSearchResponse[]>;
 
-    getActiveSessionGroup(): Observable<Group>;
+    updateById(request: UpdateByIdRequest): Observable<GroupUpdateResponse>;
 
-    setActiveSessionForGroup(groupGid: string): Observable<boolean>;
+    deleteById(request: DeleteByIdRequest): Observable<GroupDeleteResponse>;
 
-    getActiveGroupSession(): Observable<GroupSession | undefined>;
+    addMembers(request: AddMembersRequest): Observable<GroupAddMembersResponse>;
 
-    getAllGroups(getAllGroupRequest?: GetAllGroupRequest): Observable<Group[]>;
+    updateMembers(request: UpdateMembersRequest): Observable<GroupUpdateMembersResponse>;
 
-    addProfilesToGroup(profilesToGroupRequest: ProfilesToGroupRequest): Observable<number>;
+    removeMembers(request: RemoveMembersRequest): Observable<GroupRemoveMembersResponse>;
 
-    removeActiveGroupSession(): Observable<undefined>;
+    addActivities(request: AddActivitiesRequest): Observable<GroupAddActivitiesResponse>;
 
-    // @internal
-    registerTelemetryService(telemetryService: TelemetryService): void;
+    updateActivities(request: UpdateActivitiesRequest): Observable<GroupUpdateActivitiesResponse>;
+
+    removeActivities(request: RemoveActivitiesRequest): Observable<GroupRemoveActivitiesResponse>;
+
+    getSupportedActivities(): Observable<Form<GroupSupportedActivitiesFormField>>;
+
+    suspendById(request: ActivateAndDeactivateByIdRequest): Observable<GroupSuspendResponse>;
+
+    reactivateById(request: ActivateAndDeactivateByIdRequest): Observable<GroupReactivateResponse>;
+
+    updateGroupGuidelines(request: CsGroupUpdateGroupGuidelinesRequest): Observable<CsGroupUpdateGroupGuidelinesResponse>;
 }

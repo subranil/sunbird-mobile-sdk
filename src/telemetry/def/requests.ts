@@ -6,9 +6,12 @@ export interface TelemetryAuditRequest {
     actor: Actor;
     currentState: AuditState;
     updatedProperties?: string[];
+    type?: string;
     objId?: string;
     objType?: string;
     objVer?: string;
+    correlationData?: Array<CorrelationData>;
+    rollUp?: Rollup;
 }
 
 export class TelemetryInteractRequest {
@@ -66,6 +69,42 @@ export class TelemetryStartRequest {
     correlationData?: Array<CorrelationData>;
 }
 
+export class TelemetrySummaryRequest {
+    type: string;
+    starttime: number;
+    endtime: number;
+    timespent: number;
+    pageviews: number;
+    interactions: number;
+    env: Environment;
+    mode?: string;
+    envsummary?: {
+        env: string,
+        timespent: number,
+        visits: number
+    }[];
+    eventsummary?: {
+        id: string,
+        count: number
+    } [];
+    pagesummary?: {
+        id: string,
+        type: string,
+        env: string,
+        timespent: number,
+        visits: number
+    }[];
+    extra?: {
+        id: string,
+        value: string
+    }[];
+    correlationData?: Array<CorrelationData>;
+    objId?: string;
+    objType?: string;
+    objVer?: string;
+    rollup?: Rollup;
+}
+
 export class TelemetryEndRequest {
     env: Environment;
     type?: string;
@@ -82,11 +121,13 @@ export class TelemetryEndRequest {
 
 export class TelemetryFeedbackRequest {
     env: string;
-    rating: number;
+    rating?: number;
     comments: string;
     objId: string;
     objType: string;
     objVer: string;
+    commentid?: string;
+    commenttxt?: string;
 }
 
 
@@ -105,11 +146,16 @@ export class TelemetryShareRequest {
     type: string;
     items: Array<Item> = [];
     env: string;
+    correlationData?: Array<CorrelationData>;
+    objId?: string;
+    objType?: string;
+    objVer?: string;
+    rollUp?: Rollup;
 
 }
 
 export interface Item {
-    type: ShareItemType;
+    type: ShareItemType | string;
     origin: string;
     identifier: string;
     pkgVersion: number;
@@ -117,24 +163,18 @@ export interface Item {
     size: string;
 }
 
-export interface ExportTelemetryContext {
-    destinationFolder: string;
-    destinationDBFilePath?: string;
-    metadata?: { [index: string]: any };
-    size?: string;
-}
-
 export interface ImportTelemetryContext {
     sourceDBFilePath: string;
     metadata?: { [index: string]: any };
 }
 
-export interface TelemetryExportRequest {
-    destinationFolder: string;
-}
-
 export interface TelemetryImportRequest {
     sourceFilePath: string;
+}
+
+export interface TelemetrySyncRequest {
+    ignoreSyncThreshold?: boolean;
+    ignoreAutoSyncMode?: boolean;
 }
 
 

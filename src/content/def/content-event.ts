@@ -23,11 +23,18 @@ export interface ContentImportCompleted extends ContentEvent {
     };
 }
 
+export interface ContentExtractCompleted extends ContentEvent {
+    payload: {
+        contentId: string;
+    };
+}
+
 export enum ContentEventType {
     UPDATE = 'UPDATE',
     IMPORT_COMPLETED = 'IMPORT_COMPLETED',
     IMPORT_PROGRESS = 'IMPORT_PROGRESS',
-    STREAMING_URL_AVAILABLE = 'STREAMING_URL_AVAILABLE',
+    SERVER_CONTENT_DATA = 'SERVER_CONTENT_DATA',
     COURSE_STATE_UPDATED = 'COURSE_STATE_UPDATED',
+    CONTENT_EXTRACT_COMPLETED = 'CONTENT_EXTRACT_COMPLETED'
 }
 

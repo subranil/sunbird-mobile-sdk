@@ -1,9 +1,18 @@
-import {SearchType} from '..';
+import {ContentData, SearchType} from '..';
 import {Content, HierarchyInfo} from './content';
-import {CorrelationData} from '../../telemetry';
+import {CorrelationData, Rollup} from '../../telemetry';
 import {ContentImportResponse} from './response';
 import {ContentEntry} from '../db/schema';
 import {DownloadRequest} from '../../util/download';
+import {CachedItemRequest} from '../../key-value-store';
+
+export interface ContentAggregatorRequest extends CachedItemRequest {
+    applyFirstAvailableCombination?: {
+        [key in keyof ContentData]?: string[]
+    };
+    userPreferences?: {[key: string]: string[] | string | undefined};
+    interceptSearchCriteria?: (searchCriteria: ContentSearchCriteria) => ContentSearchCriteria;
+}
 
 export interface ContentDecorateRequest {
     content: Content;
@@ -14,6 +23,7 @@ export interface ContentDecorateRequest {
 
 export interface ContentDetailRequest {
     contentId: string;
+    emitUpdateIfAny?: boolean;
     attachFeedback?: boolean;
     attachContentAccess?: boolean;
     attachContentMarker?: boolean;
@@ -21,7 +31,7 @@ export interface ContentDetailRequest {
 
 export interface ContentRequest {
     uid?: string | string[];
-    contentTypes: string[];
+    primaryCategories: string[];
     audience?: string[];
     pragma?: string[];
     exclPragma?: string[];
@@ -33,6 +43,11 @@ export interface ContentRequest {
     localOnly?: boolean;
     resourcesOnly?: boolean;
     limit?: number;
+    board?: string[];
+    medium?: string[];
+    grade?: string[];
+    dialcodes?: string[];
+    childNodes?: string[];
 }
 
 export interface ContentSortCriteria {
@@ -51,7 +66,6 @@ export interface ChildContentRequest {
     level?: number;
 }
 
-
 export interface ContentDeleteRequest {
     contentDeleteList: ContentDelete[];
 }
@@ -66,12 +80,15 @@ export interface EcarImportRequest {
     destinationFolder: string;
     sourceFilePath: string;
     correlationData: CorrelationData[];
+    rollUp?: Rollup;
+    identifier?: string;
 }
 
-
 export interface ContentImportRequest {
+    withPriority?: number;
     contentImportArray: ContentImport[];
     contentStatusArray: string[];
+    fields?: (keyof ContentData)[];
 }
 
 export interface ContentImport {
@@ -79,11 +96,14 @@ export interface ContentImport {
     destinationFolder: string;
     contentId: string;
     correlationData?: CorrelationData[];
+    rollUp?: Rollup;
 }
 
 export interface ContentExportRequest {
     destinationFolder: string;
     contentIds: string[];
+    saveLocally?: boolean;
+    subContentIds?: string[];
 }
 
 export interface ContentMarkerRequest {
@@ -102,7 +122,6 @@ export enum MarkerType {
 }
 
 export interface ContentSearchCriteria {
-
     query?: string;
     exists?: string[];
     offset?: number;
@@ -133,6 +152,10 @@ export interface ContentSearchCriteria {
     searchType?: SearchType;
     framework?: string;
     languageCode?: string;
+    mimeType?: string[];
+    subject?: string[];
+    fields?: string[];
+    primaryCategories?: string[];
 }
 
 export interface ContentSearchFilter {
@@ -147,12 +170,12 @@ export interface FilterValue {
     translations?: string;
     description?: string;
     index?: number;
+    values?: FilterValue[];
 }
 
 export interface ContentSortCriteria {
     sortAttribute: string;
     sortOrder: SortOrder;
-
 }
 
 export interface ImportContentContext {
@@ -163,9 +186,16 @@ export interface ImportContentContext {
     manifestVersion?: string;
     skippedItemsIdentifier?: string[];
     items?: any[];
-    identifiers?: string[];
+    identifiers?: string[]; // Non unit content identifier
     contentImportResponseList: ContentImportResponse[];
     tmpLocation?: string;
+    rootIdentifier?: string;
+    correlationData?: CorrelationData[];
+    rollUp?: Rollup;
+    existedContentIdentifiers?: { [identifier: string]: boolean };   // Update the content, but do not update refCount.
+    // Because for the same content it was increasing the refCount when updating/re-importing/while importing artifact.
+    contentIdsToDelete: Set<string>;    // Orphan contents which is not part of updated version of Book/Course, needs to delete.
+    identifier?: string; // identifier of the content only required only for telemetry.
 }
 
 export interface ExportContentContext {
@@ -176,11 +206,14 @@ export interface ExportContentContext {
     contentModelsToExport: ContentEntry.SchemaMap[];
     metadata: { [key: string]: any };
     manifest?: any;
+    subContentIds?: string[];
 }
 
 export interface ContentDownloadRequest extends DownloadRequest {
+    contentMeta: Partial<Content>;
     isChildContent?: boolean;
     correlationData?: CorrelationData[];
+    rollUp?: Rollup;
 }
 
 export interface RelevantContentRequest extends DownloadRequest {
@@ -188,5 +221,14 @@ export interface RelevantContentRequest extends DownloadRequest {
     contentIdentifier?: string;
     next?: boolean;
     prev?: boolean;
+    shouldConvertBasePath?: boolean;
 }
 
+export interface ContentSpaceUsageSummaryRequest {
+    paths: string[];
+}
+
+export interface ContentSpaceUsageSummaryResponse {
+    path: string;
+    sizeOnDevice: number;
+}

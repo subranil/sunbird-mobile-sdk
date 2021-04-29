@@ -1,280 +1,140 @@
-import {DbService} from '../../db';
-import {Observable} from 'rxjs';
-import {GroupEntry, GroupProfileEntry} from '../db/schema';
 import {
-    GetAllGroupRequest,
-    Group,
+    AddActivitiesRequest,
+    AddMembersRequest,
+    DeleteByIdRequest,
+    GetByIdRequest,
+    GroupActivityService,
+    GroupAddActivitiesResponse,
+    GroupAddMembersResponse,
+    GroupCreateRequest,
+    GroupCreateResponse,
+    GroupDeleteResponse,
+    GroupRemoveActivitiesResponse,
+    GroupRemoveMembersResponse,
+    GroupSearchCriteria,
+    GroupSearchResponse,
     GroupService,
-    GroupSession,
-    NoActiveGroupSessionError,
-    NoGroupFoundError,
-    ProfilesToGroupRequest
+    GroupSupportedActivitiesFormField,
+    GroupUpdateActivitiesResponse,
+    GroupUpdateMembersResponse,
+    GroupUpdateResponse,
+    RemoveActivitiesRequest,
+    RemoveMembersRequest,
+    UpdateActivitiesRequest,
+    UpdateByIdRequest,
+    UpdateMembersRequest
 } from '..';
-import {GroupMapper} from '../util/group-mapper';
-import {UniqueId} from '../../db/util/unique-id';
-import {KeyValueStore} from '../../key-value-store';
-import {ProfileService, ProfileSession} from '../../profile';
-import {SharedPreferences} from '../../util/shared-preferences';
-import {GroupKeys} from '../../preference-keys';
-import {Actor, AuditState, ObjectType, TelemetryAuditRequest, TelemetryService} from '../../telemetry';
-import {ObjectUtil} from '../../util/object-util';
+import {Observable} from 'rxjs';
+import {Group, GroupEntityStatus} from '../def/models';
+import {Form} from '../../form/def/models';
+import {Container, inject, injectable} from 'inversify';
+import {CsInjectionTokens, InjectionTokens} from '../../injection-tokens';
+import {CsGroupService, CsGroupUpdateGroupGuidelinesRequest, CsGroupUpdateGroupGuidelinesResponse} from '@project-sunbird/client-services/services/group';
+import {CachedItemRequestSourceFrom, CachedItemStore} from '../../key-value-store';
+import {GroupActivityServiceImpl} from './group-activity-service-impl';
+import { CsGroupServiceConfig } from '@project-sunbird/client-services';
+import { ActivateAndDeactivateByIdRequest } from '../def/requests';
+import { GroupReactivateResponse, GroupSuspendResponse } from '../def/responses';
 
-
+@injectable()
 export class GroupServiceImpl implements GroupService {
-    private static readonly KEY_GROUP_SESSION = GroupKeys.KEY_GROUP_SESSION;
-    private telemetryService: TelemetryService;
+    private static GROUP_LOCAL_KEY = 'GROUP-';
+    private static GROUP_SEARCH_LOCAL_KEY = 'GROUP_SEARCH-';
 
-    constructor(private dbService: DbService,
-                private profileService: ProfileService,
-                private keyValueStore: KeyValueStore,
-                private sharedPreferences: SharedPreferences) {
-    }
+    private _groupActivityService: GroupActivityService;
 
-    public registerTelemetryService(telemetryService: TelemetryService) {
-        this.telemetryService = telemetryService;
-    }
-
-    createGroup(group: Group): Observable<Group> {
-        group.gid = UniqueId.generateUniqueId();
-        group.createdAt = Date.now();
-        group.updatedAt = Date.now();
-
-        return this.dbService.insert({
-            table: GroupEntry.TABLE_NAME,
-            modelJson: GroupMapper.mapGroupToGroupDBEntry(group)
-        }).do(async () => {
-            await this.profileService.getActiveProfileSession()
-                .map((session) => session.uid)
-                .mergeMap((uid) => {
-                    const actor = new Actor();
-                    actor.id = uid;
-                    actor.type = Actor.TYPE_SYSTEM;
-
-                    const auditRequest: TelemetryAuditRequest = {
-                        env: 'sdk',
-                        actor,
-                        currentState: AuditState.AUDIT_CREATED,
-                        updatedProperties: ObjectUtil.getTruthyProps(group),
-                        objId: group.gid,
-                        objType: ObjectType.GROUP
-                    };
-
-                    return this.telemetryService.audit(auditRequest);
-                }).toPromise();
-        }).map(() => group);
-    }
-
-    deleteGroup(gid: string): Observable<undefined> {
-        return Observable
-            .defer(() => Observable.of(this.dbService.beginTransaction()))
-            .mergeMap(() => {
-                return Observable.zip(
-                    this.dbService.delete({
-                        table: GroupEntry.TABLE_NAME,
-                        selection: `${GroupEntry.COLUMN_NAME_GID} = ?`,
-                        selectionArgs: [gid]
-                    }),
-                    this.dbService.delete({
-                        table: GroupProfileEntry.TABLE_NAME,
-                        selection: `${GroupProfileEntry.COLUMN_NAME_GID} = ?`,
-                        selectionArgs: [gid]
-                    })
-                ).mapTo(undefined);
-            }).do(() => {
-                this.dbService.endTransaction(true);
-            }).do(async () => {
-                await this.profileService.getActiveProfileSession()
-                    .mergeMap((session: ProfileSession) => {
-                        const actor = new Actor();
-                        actor.id = session.uid;
-                        actor.type = Actor.TYPE_SYSTEM;
-
-                        const auditRequest: TelemetryAuditRequest = {
-                            env: 'sdk',
-                            actor,
-                            currentState: AuditState.AUDIT_DELETED,
-                            objId: gid,
-                            objType: ObjectType.GROUP
-                        };
-
-                        return this.telemetryService.audit(auditRequest);
-                    }).toPromise();
-            }).catch((e) => {
-                this.dbService.endTransaction(false);
-                return Observable.throw(e);
-            });
-    }
-
-    updateGroup(group: Group): Observable<Group> {
-        return this.dbService.read({
-            table: GroupEntry.TABLE_NAME,
-            selection: 'gid = ?',
-            selectionArgs: [group.gid],
-        }).map((rows) => {
-            if (!rows || !rows[0]) {
-                return Observable.throw(new NoGroupFoundError(`No Group found with ID ${group.gid}`));
-            }
-
-            return GroupMapper.mapGroupDBEntryToGroup(rows[0]);
-        }).do(async (prevGroup) => {
-            await this.profileService.getActiveProfileSession()
-                .mergeMap((session: ProfileSession) => {
-                    const actor = new Actor();
-                    actor.id = session.uid;
-                    actor.type = Actor.TYPE_SYSTEM;
-
-                    const auditRequest: TelemetryAuditRequest = {
-                        env: 'sdk',
-                        actor,
-                        currentState: AuditState.AUDIT_UPDATED,
-                        updatedProperties: ObjectUtil.getPropDiff(group, prevGroup),
-                        objId: group.gid,
-                        objType: ObjectType.GROUP
-                    };
-
-                    return this.telemetryService.audit(auditRequest);
-                }).toPromise();
-        }).mergeMap(() => {
-            return this.dbService.update({
-                table: GroupEntry.TABLE_NAME,
-                selection: 'gid = ?',
-                selectionArgs: [group.gid],
-                modelJson: {
-                    [GroupEntry.COLUMN_NAME_NAME]: group.name,
-                    [GroupEntry.COLUMN_NAME_SYLLABUS]: group.syllabus.join(','),
-                    [GroupEntry.COLUMN_NAME_UPDATED_AT]: Date.now(),
-                    [GroupEntry.COLUMN_NAME_GRADE]: group.grade.join(','),
-                    [GroupEntry.COLUMN_NAME_GRADE_VALUE]: JSON.stringify(group.gradeValue)
-                }
-            }).mapTo(group);
-        });
-    }
-
-    getActiveSessionGroup(): Observable<Group> {
-        return this.getActiveGroupSession()
-            .map((profileSession: GroupSession | undefined) => {
-                if (!profileSession) {
-                    throw new NoActiveGroupSessionError('No active session available');
-                }
-
-                return profileSession;
-            })
-            .mergeMap((profileSession: GroupSession) => {
-                return this.dbService.read({
-                    table: GroupEntry.TABLE_NAME,
-                    selection: `${GroupEntry.COLUMN_NAME_GID} = ?`,
-                    selectionArgs: [profileSession.gid]
-                }).map((rows) => rows && rows[0]);
-            });
-    }
-
-    setActiveSessionForGroup(gid: string): Observable<boolean> {
-        return this.dbService
-            .read({
-                table: GroupEntry.TABLE_NAME,
-                selection: `${GroupEntry.COLUMN_NAME_GID} = ?`,
-                selectionArgs: [gid]
-            })
-            .map((rows: GroupEntry.SchemaMap[]) =>
-                rows && rows[0] && GroupMapper.mapGroupDBEntryToGroup(rows[0])
-            )
-            .map((group: Group | undefined) => {
-                if (!group) {
-                    throw new NoGroupFoundError('No Profile found');
-                }
-
-                return group;
-            })
-            .mergeMap((group: Group) => {
-                const groupSession = new GroupSession(group.gid);
-                return this.sharedPreferences.putString(GroupServiceImpl.KEY_GROUP_SESSION, JSON.stringify({
-                    gid: groupSession.gid,
-                    sid: groupSession.sid,
-                    createdTime: groupSession.createdTime
-                })).mapTo(true);
-            });
-    }
-
-    getActiveGroupSession(): Observable<GroupSession | undefined> {
-        return this.sharedPreferences.getString(GroupServiceImpl.KEY_GROUP_SESSION)
-            .map((response) => {
-                if (!response) {
-                    return undefined;
-                }
-                return JSON.parse(response);
-
-            });
-    }
-
-    getAllGroups(groupRequest?: GetAllGroupRequest): Observable<Group[]> {
-        return Observable.defer(() => {
-            if (groupRequest) {
-                return this.dbService.execute(`
-                    SELECT * FROM ${GroupEntry.TABLE_NAME}
-                    LEFT JOIN ${GroupProfileEntry.TABLE_NAME} ON
-                    ${GroupEntry.TABLE_NAME}.${GroupEntry.COLUMN_NAME_GID} =
-                    ${GroupProfileEntry.TABLE_NAME}.${GroupProfileEntry.COLUMN_NAME_GID}
-                    WHERE ${GroupProfileEntry.COLUMN_NAME_UID} = "${groupRequest!.uid}"`
-                ).map((groups: GroupEntry.SchemaMap[]) =>
-                    groups.map((group: GroupEntry.SchemaMap) => GroupMapper.mapGroupDBEntryToGroup(group))
-                );
-            }
-
-            return this.dbService.read({
-                table: GroupEntry.TABLE_NAME,
-                columns: []
-            }).map((groups: GroupEntry.SchemaMap[]) =>
-                groups.map((group: GroupEntry.SchemaMap) => GroupMapper.mapGroupDBEntryToGroup(group))
+    get activityService(): GroupActivityService {
+        if (!this._groupActivityService) {
+            this._groupActivityService = new GroupActivityServiceImpl(
+                this.groupServiceDelegate.activityService,
+                this.cachedItemStore
             );
-        }).mergeMap((groups: Group[]) =>
-            Observable.from(groups)
-        ).mergeMap((group: Group) =>
-            this.profileService.getAllProfiles({
-                groupId: group.gid
-            }).map((profiles) => ({
-                ...group,
-                profilesCount: profiles.length
-            }))
-        ).reduce((allResponses, currentResponse) => [...allResponses, currentResponse], []);
+        }
+
+        return this._groupActivityService;
     }
 
-
-    addProfilesToGroup(profileToGroupRequest: ProfilesToGroupRequest): Observable<number> {
-        return Observable
-            .defer(() => Observable.of(this.dbService.beginTransaction()))
-            .mergeMap(() => this.dbService.delete({
-                table: GroupProfileEntry.TABLE_NAME,
-                selection: `${GroupProfileEntry.COLUMN_NAME_GID} = ?`,
-                selectionArgs: [profileToGroupRequest.groupId]
-            }))
-            .switchMap(() => {
-                return Observable.from(profileToGroupRequest.uidList)
-                    .mergeMap((uid: string) => {
-                        return this.dbService.insert({
-                            table: GroupProfileEntry.TABLE_NAME,
-                            modelJson: {
-                                [GroupProfileEntry.COLUMN_NAME_GID]: profileToGroupRequest.groupId,
-                                [GroupProfileEntry.COLUMN_NAME_UID]: uid
-                            }
-                        });
-                    });
-            })
-            .do(() => {
-                this.dbService.endTransaction(true);
-            })
-            .catch((e) => {
-                this.dbService.endTransaction(false);
-                return Observable.throw(e);
-            });
+    constructor(
+        @inject(InjectionTokens.CONTAINER) private container: Container,
+        @inject(InjectionTokens.CACHED_ITEM_STORE) private cachedItemStore: CachedItemStore
+    ) {
     }
 
-    removeActiveGroupSession(): Observable<undefined> {
-        return this.getActiveGroupSession()
-        .mergeMap( (groupSession) => {
-            if (!groupSession) {
-                return Observable.of(undefined);
-            }
-            return this.sharedPreferences.putString(GroupServiceImpl.KEY_GROUP_SESSION, '');
-        });
+    private get groupServiceDelegate(): CsGroupService {
+        return this.container.get(CsInjectionTokens.GROUP_SERVICE);
     }
+
+    create(request: GroupCreateRequest): Observable<GroupCreateResponse> {
+        return this.groupServiceDelegate.create(request);
+    }
+
+    getById(request: GetByIdRequest): Observable<Group> {
+        return this.cachedItemStore[request.from === CachedItemRequestSourceFrom.SERVER ? 'get' : 'getCached'](
+            `${request.id}-${request.userId}` +
+            `${(request.options && request.options.includeMembers) ? '-includeMembers:' + request.options.includeMembers : ''}` +
+            `${(request.options && request.options.includeActivities) ? '-includeActivities:' + request.options.includeActivities : ''}` +
+            `${(request.options && request.options.groupActivities) ? '-groupActivities:' + request.options.groupActivities : ''}`,
+            GroupServiceImpl.GROUP_LOCAL_KEY,
+            'ttl_' + GroupServiceImpl.GROUP_LOCAL_KEY,
+            () => this.groupServiceDelegate.getById(request.id, request.options),
+        );
+    }
+
+    search({request, from}: GroupSearchCriteria): Observable<GroupSearchResponse[]> {
+        return this.cachedItemStore[from === CachedItemRequestSourceFrom.SERVER ? 'get' : 'getCached'](
+            `${request.filters.userId}`,
+            GroupServiceImpl.GROUP_SEARCH_LOCAL_KEY,
+            'ttl_' + GroupServiceImpl.GROUP_SEARCH_LOCAL_KEY,
+            () => this.groupServiceDelegate.search(request),
+        );
+    }
+
+    updateById(request: UpdateByIdRequest): Observable<GroupUpdateResponse> {
+        return this.groupServiceDelegate.updateById(request.id, request.updateRequest);
+    }
+
+    deleteById(request: DeleteByIdRequest): Observable<GroupDeleteResponse> {
+        return this.groupServiceDelegate.deleteById(request.id);
+    }
+
+    addMembers(request: AddMembersRequest): Observable<GroupAddMembersResponse> {
+        return this.groupServiceDelegate.addMembers(request.groupId, request.addMembersRequest);
+    }
+
+    updateMembers(request: UpdateMembersRequest): Observable<GroupUpdateMembersResponse> {
+        return this.groupServiceDelegate.updateMembers(request.groupId, request.updateMembersRequest);
+    }
+
+    removeMembers(request: RemoveMembersRequest): Observable<GroupRemoveMembersResponse> {
+        return this.groupServiceDelegate.removeMembers(request.groupId, request.removeMembersRequest);
+    }
+
+    addActivities(request: AddActivitiesRequest): Observable<GroupAddActivitiesResponse> {
+        return this.groupServiceDelegate.addActivities(request.groupId, request.addActivitiesRequest);
+    }
+
+    updateActivities(request: UpdateActivitiesRequest): Observable<GroupUpdateActivitiesResponse> {
+        return this.groupServiceDelegate.updateActivities(request.groupId, request.updateActivitiesRequest);
+    }
+
+    removeActivities(request: RemoveActivitiesRequest): Observable<GroupRemoveActivitiesResponse> {
+        return this.groupServiceDelegate.removeActivities(request.groupId, request.removeActivitiesRequest);
+    }
+
+    getSupportedActivities(): Observable<Form<GroupSupportedActivitiesFormField>> {
+        return this.groupServiceDelegate.getSupportedActivities();
+    }
+
+    suspendById(request: ActivateAndDeactivateByIdRequest): Observable<GroupSuspendResponse> {
+        return this.groupServiceDelegate.suspendById(request.id);
+    }
+
+    reactivateById(request: ActivateAndDeactivateByIdRequest): Observable<GroupReactivateResponse> {
+        return this.groupServiceDelegate.reactivateById(request.id);
+    }
+
+    updateGroupGuidelines(request: CsGroupUpdateGroupGuidelinesRequest): Observable<CsGroupUpdateGroupGuidelinesResponse> {
+        return this.groupServiceDelegate.updateGroupGuidelines(request);
+    }
+
 }

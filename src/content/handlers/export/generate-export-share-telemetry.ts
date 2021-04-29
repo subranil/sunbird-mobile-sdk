@@ -1,4 +1,4 @@
-import {ContentExportResponse, ExportContentContext, ImportContentContext} from '../..';
+import {ContentExportResponse, ExportContentContext, ContentExportRequest} from '../..';
 import {Response} from '../../../api';
 import {Item, ShareDirection, ShareItemType, ShareType, TelemetryService, TelemetryShareRequest} from '../../../telemetry';
 import {ContentUtil} from '../../util/content-util';
@@ -7,7 +7,7 @@ export class GenerateExportShareTelemetry {
     constructor(private telemetryService: TelemetryService) {
     }
 
-    execute(exportContentContext: ExportContentContext): Promise<Response> {
+    execute(exportContentContext: ExportContentContext, fileName: string, contentExportRequest: ContentExportRequest): Promise<Response> {
         const response: Response = new Response();
         const items: Item[] = [];
         for (const element of exportContentContext.items!) {
@@ -26,14 +26,20 @@ export class GenerateExportShareTelemetry {
             items: items,
             env: 'sdk'
         };
-        return this.telemetryService.share(req).toPromise().then(() => {
-            const exportResponse: ContentExportResponse = {exportedFilePath: exportContentContext.ecarFilePath!};
-            response.body = exportResponse;
-            return Promise.resolve(response);
-        }).catch(() => {
-            return Promise.reject(response);
-        });
+        return this.telemetryService.share(req).toPromise()
+            .then(() => {
+                let exportedFilePath;
+                if (contentExportRequest.saveLocally) {
+                    exportedFilePath = contentExportRequest.destinationFolder.concat(fileName);
+                } else {
+                    exportedFilePath = cordova.file.externalCacheDirectory.concat(fileName);
+                }
+                const exportResponse: ContentExportResponse = {exportedFilePath: exportedFilePath};
+                response.body = exportResponse;
+                return Promise.resolve(response);
+            }).catch(() => {
+                return Promise.reject(response);
+            });
     }
-
 
 }

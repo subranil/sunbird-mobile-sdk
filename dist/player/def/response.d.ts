@@ -1,5 +1,5 @@
 import { Content } from '../../content';
-import { Actor, CorrelationData, ProducerData } from '../../telemetry';
+import { Actor, CorrelationData, ProducerData, Rollup } from '../../telemetry';
 export interface PlayerInput {
     context?: Context;
     metadata?: Content;
@@ -16,6 +16,9 @@ export interface Context {
     pdata?: ProducerData;
     deeplinkBasePath?: string;
     cdata?: CorrelationData[];
+    contextRollup?: Rollup;
+    objectRollup?: Rollup;
+    origin?: string;
 }
 export interface PlayerConfig {
     splash: {
@@ -25,8 +28,15 @@ export interface PlayerConfig {
         webLink: string;
     };
     showEndPage: boolean;
+    endPage: Array<any>;
     overlay: {
         enableUserSwitcher: boolean;
         showUser: boolean;
     };
+    plugins?: Plugin[];
+}
+export interface Plugin {
+    id: string;
+    ver: string;
+    type: string;
 }

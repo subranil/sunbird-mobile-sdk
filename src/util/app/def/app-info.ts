@@ -1,4 +1,11 @@
+import {Observable} from 'rxjs';
+
 export interface AppInfo {
     init();
-    getVersionName();
+
+    getAppName(): string;
+
+    getVersionName(): string;
+
+    getFirstAccessTimestamp(): Observable<string>;
 }

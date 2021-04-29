@@ -1,77 +1,171 @@
 import {DbService, InsertQuery} from '../../db';
 import {
-    ExportTelemetryContext,
+    Context,
     ImportTelemetryContext,
     SunbirdTelemetry,
     TelemetryAuditRequest,
     TelemetryDecorator,
     TelemetryEndRequest,
     TelemetryErrorRequest,
-    TelemetryExportRequest,
     TelemetryFeedbackRequest,
     TelemetryImportRequest,
     TelemetryImpressionRequest,
-    TelemetryInteractRequest, TelemetryInterruptRequest,
+    TelemetryInteractRequest,
+    TelemetryInterruptRequest,
     TelemetryLogRequest,
     TelemetryService,
     TelemetryShareRequest,
     TelemetryStartRequest,
-    TelemetryStat,
+    TelemetryStat, TelemetrySummaryRequest,
+    TelemetrySyncRequest,
     TelemetrySyncStat
 } from '..';
 import {TelemetryEntry, TelemetryProcessedEntry} from '../db/schema';
-import {Observable} from 'rxjs';
 import {ProfileService, ProfileSession} from '../../profile';
-import {GroupService, GroupSession} from '../../group';
+import {GroupServiceDeprecated, GroupSessionDeprecated} from '../../group-deprecated';
 import {TelemetrySyncHandler} from '../handler/telemetry-sync-handler';
 import {KeyValueStore} from '../../key-value-store';
 import {ApiService, Response} from '../../api';
 import {TelemetryConfig} from '../config/telemetry-config';
-import {DeviceInfo} from '../../util/device/def/device-info';
+import {DeviceInfo} from '../../util/device';
 import {EventNamespace, EventsBusService} from '../../events-bus';
 import {FileService} from '../../util/file/def/file-service';
-import {CreateTelemetryExportFile} from '../handler/export/create-telemetry-export-file';
-import {TelemetryExportResponse} from '../def/response';
-import {CopyDatabase} from '../handler/export/copy-database';
-import {CreateMetaData} from '../handler/export/create-meta-data';
-import {CleanupExportedFile} from '../handler/export/cleanup-exported-file';
-import {CleanCurrentDatabase} from '../handler/export/clean-current-database';
-import {GenerateShareTelemetry} from '../handler/export/generate-share-telemetry';
 import {ValidateTelemetryMetadata} from '../handler/import/validate-telemetry-metadata';
 import {TelemetryEventType} from '../def/telemetry-event';
 import {TransportProcessedTelemetry} from '../handler/import/transport-processed-telemetry';
 import {UpdateImportedTelemetryMetadata} from '../handler/import/update-imported-telemetry-metadata';
 import {GenerateImportTelemetryShare} from '../handler/import/generate-import-telemetry-share';
+import {FrameworkService} from '../../framework';
+import {NetworkInfoService, NetworkStatus} from '../../util/network';
+import {inject, injectable} from 'inversify';
+import {InjectionTokens} from '../../injection-tokens';
+import {SdkConfig} from '../../sdk-config';
+import {ErrorLoggerService} from '../../error';
+import {SharedPreferences} from '../../util/shared-preferences';
+import {AppInfo} from '../../util/app';
+import {DeviceRegisterService} from '../../device-register';
+import {catchError, map, mapTo, mergeMap, take, tap} from 'rxjs/operators';
+import {BehaviorSubject, combineLatest, defer, from, Observable, Observer, of, zip} from 'rxjs';
+import {ApiKeys, TelemetryKeys} from '../../preference-keys';
+import {TelemetryAutoSyncServiceImpl} from '../util/telemetry-auto-sync-service-impl';
+import {CourseService} from '../../course';
+import {NetworkQueue} from '../../api/network-queue';
+import {CorrelationData} from '../def/telemetry-model';
+import {SdkServiceOnInitDelegate} from '../../sdk-service-on-init-delegate';
+import {SdkServicePreInitDelegate} from '../../sdk-service-pre-init-delegate';
+import {ApiTokenHandler} from '../../api/handlers/api-token-handler';
+import {AuthUtil} from '../../auth/util/auth-util';
 
-export class TelemetryServiceImpl implements TelemetryService {
-    private static readonly KEY_TELEMETRY_LAST_SYNCED_TIME_STAMP = 'telemetry_last_synced_time_stamp';
 
-    constructor(private dbService: DbService,
-                private decorator: TelemetryDecorator,
-                private profileService: ProfileService,
-                private groupService: GroupService,
-                private keyValueStore: KeyValueStore,
-                private apiService: ApiService,
-                private telemetryConfig: TelemetryConfig,
-                private deviceInfo: DeviceInfo,
-                private eventsBusService: EventsBusService,
-                private fileService: FileService) {
+@injectable()
+export class TelemetryServiceImpl implements TelemetryService, SdkServiceOnInitDelegate, SdkServicePreInitDelegate {
+    private _lastSyncedTimestamp$: BehaviorSubject<number | undefined>;
+    private telemetryAutoSyncService?: TelemetryAutoSyncServiceImpl;
+    private telemetryConfig: TelemetryConfig;
+    private campaignParameters: CorrelationData[] = [];
+
+    get autoSync() {
+        if (!this.telemetryAutoSyncService) {
+            this.telemetryAutoSyncService = new TelemetryAutoSyncServiceImpl(this, this.sharedPreferences);
+        }
+
+        return this.telemetryAutoSyncService;
+    }
+
+    constructor(
+        @inject(InjectionTokens.DB_SERVICE) private dbService: DbService,
+        @inject(InjectionTokens.TELEMETRY_DECORATOR) private decorator: TelemetryDecorator,
+        @inject(InjectionTokens.PROFILE_SERVICE) private profileService: ProfileService,
+        @inject(InjectionTokens.GROUP_SERVICE_DEPRECATED) private groupService: GroupServiceDeprecated,
+        @inject(InjectionTokens.KEY_VALUE_STORE) private keyValueStore: KeyValueStore,
+        @inject(InjectionTokens.API_SERVICE) private apiService: ApiService,
+        @inject(InjectionTokens.SDK_CONFIG) private sdkConfig: SdkConfig,
+        @inject(InjectionTokens.DEVICE_INFO) private deviceInfo: DeviceInfo,
+        @inject(InjectionTokens.EVENTS_BUS_SERVICE) private eventsBusService: EventsBusService,
+        @inject(InjectionTokens.FILE_SERVICE) private fileService: FileService,
+        @inject(InjectionTokens.FRAMEWORK_SERVICE) private frameworkService: FrameworkService,
+        @inject(InjectionTokens.NETWORKINFO_SERVICE) private networkInfoService: NetworkInfoService,
+        @inject(InjectionTokens.ERROR_LOGGER_SERVICE) private errorLoggerService: ErrorLoggerService,
+        @inject(InjectionTokens.SHARED_PREFERENCES) private sharedPreferences: SharedPreferences,
+        @inject(InjectionTokens.APP_INFO) private appInfoService: AppInfo,
+        @inject(InjectionTokens.DEVICE_REGISTER_SERVICE) private deviceRegisterService: DeviceRegisterService,
+        @inject(InjectionTokens.COURSE_SERVICE) private courseService: CourseService,
+        @inject(InjectionTokens.NETWORK_QUEUE) private networkQueue: NetworkQueue,
+    ) {
+        this.telemetryConfig = this.sdkConfig.telemetryConfig;
+        this._lastSyncedTimestamp$ = new BehaviorSubject<number | undefined>(undefined);
+    }
+
+    preInit(): Observable<undefined> {
+        return defer(async () => {
+            this.getInitialUtmParameters().then((parameters) => {
+                if (parameters && parameters.length) {
+                    this.updateCampaignParameters(parameters);
+                }
+            });
+            return undefined;
+        });
+    }
+
+    onInit(): Observable<undefined> {
+        return combineLatest([
+            defer(async () => {
+                const lastSyncTimestamp = await this.sharedPreferences.getString(TelemetryKeys.KEY_LAST_SYNCED_TIME_STAMP).toPromise();
+                if (lastSyncTimestamp) {
+                    try {
+                        this._lastSyncedTimestamp$.next(parseInt(lastSyncTimestamp, 10));
+                    } catch (e) {
+                        console.error(e);
+                    }
+                }
+                return undefined;
+            }),
+            new Observable((observer: Observer<undefined>) => {
+                sbsync.onAuthorizationError(async (response) => {
+                    const error = response.network_queue_error;
+                    if (error) {
+                        observer.next(error);
+                    }
+                }, async (error) => {
+                });
+            }).pipe(
+                mergeMap((error) => {
+                    if (error === 'API_TOKEN_EXPIRED') {
+                        return new ApiTokenHandler(this.sdkConfig.apiConfig, this.apiService, this.deviceInfo).refreshAuthToken().pipe(
+                            mergeMap((bearerToken) => {
+                                return this.sharedPreferences.putString(ApiKeys.KEY_API_TOKEN, bearerToken);
+                            }),
+                            catchError(() => of(undefined))
+                        );
+                    } else {
+                        return from(new AuthUtil(this.sdkConfig.apiConfig, this.apiService,
+                            this.sharedPreferences,
+                            this.eventsBusService).refreshSession()).pipe(
+                            catchError(() => of(undefined))
+                        );
+                    }
+                })
+            )
+        ]).pipe(mapTo(undefined));
+
     }
 
     saveTelemetry(request: string): Observable<boolean> {
-        return Observable.defer(() => {
+        return defer(() => {
             try {
                 const telemetry: SunbirdTelemetry.Telemetry = JSON.parse(request);
                 return this.decorateAndPersist(telemetry);
             } catch (e) {
                 console.error(e);
-                return Observable.of(false);
+                return of(false);
             }
         });
     }
 
-    audit({env, actor, currentState, updatedProperties, objId, objType, objVer}: TelemetryAuditRequest): Observable<boolean> {
-        const audit = new SunbirdTelemetry.Audit(env, actor, currentState, updatedProperties, objId, objType, objVer);
+    audit({env, actor, currentState, updatedProperties, type, objId, objType, objVer, correlationData, rollUp}:
+              TelemetryAuditRequest): Observable<boolean> {
+        const audit = new SunbirdTelemetry.Audit(env, actor, currentState, updatedProperties, type, objId,
+            objType, objVer, correlationData, rollUp);
         return this.decorateAndPersist(audit);
     }
 
@@ -84,8 +178,9 @@ export class TelemetryServiceImpl implements TelemetryService {
         return this.decorateAndPersist(end);
     }
 
-    error({errorCode, errorType, stacktrace, pageId}: TelemetryErrorRequest): Observable<boolean> {
-        const error = new SunbirdTelemetry.Error(errorCode, errorType, stacktrace, pageId);
+    error(request: TelemetryErrorRequest): Observable<boolean> {
+        const error = new SunbirdTelemetry.Error(request.errorCode, request.errorType, request.stacktrace, request.pageId);
+        this.errorLoggerService.logError(request).toPromise().catch((e) => console.error(e));
         return this.decorateAndPersist(error);
     }
 
@@ -112,17 +207,17 @@ export class TelemetryServiceImpl implements TelemetryService {
         return this.decorateAndPersist(log);
     }
 
-    share({dir, type, items}: TelemetryShareRequest): Observable<boolean> {
-        const share = new SunbirdTelemetry.Share(dir, type, []);
+    share({dir, type, items, correlationData, objId, objType, objVer, rollUp}: TelemetryShareRequest): Observable<boolean> {
+        const share = new SunbirdTelemetry.Share(dir, type, [], correlationData, objId, objType, objVer, rollUp);
         items.forEach((item) => {
             share.addItem(item.type, item.origin, item.identifier, item.pkgVersion, item.transferCount, item.size);
         });
         return this.decorateAndPersist(share);
     }
 
-    feedback({rating, comments, env, objId, objType, objVer}: TelemetryFeedbackRequest): Observable<boolean> {
+    feedback({rating, comments, env, objId, objType, objVer, commentid, commenttxt}: TelemetryFeedbackRequest): Observable<boolean> {
         const feedback = new SunbirdTelemetry.Feedback(rating, comments, env, objId,
-            objType, objVer);
+            objType, objVer, commentid, commenttxt);
         return this.decorateAndPersist(feedback);
     }
 
@@ -135,6 +230,17 @@ export class TelemetryServiceImpl implements TelemetryService {
         return this.decorateAndPersist(start);
     }
 
+    summary({
+                type, starttime, endtime, timespent, pageviews,
+                interactions, env, mode, envsummary, eventsummary, pagesummary, extra, correlationData,
+        objId, objType, objVer, rollup
+            }: TelemetrySummaryRequest): Observable<boolean> {
+        const summary = new SunbirdTelemetry.Summary(type, starttime, endtime, timespent, pageviews,
+            interactions, env, mode, envsummary, eventsummary, pagesummary, extra, correlationData,
+            objId, objType, objVer, rollup);
+        return this.decorateAndPersist(summary);
+    }
+
 
     interrupt({type, pageId}: TelemetryInterruptRequest): Observable<boolean> {
         const interrupt = new SunbirdTelemetry.Interrupt(type, pageId);
@@ -145,7 +251,7 @@ export class TelemetryServiceImpl implements TelemetryService {
         const importTelemetryContext: ImportTelemetryContext = {
             sourceDBFilePath: importTelemetryRequest.sourceFilePath
         };
-        return Observable.fromPromise(
+        return from(
             new ValidateTelemetryMetadata(this.dbService).execute(importTelemetryContext).then((importResponse: Response) => {
                 return new TransportProcessedTelemetry(this.dbService).execute(importResponse.body);
             }).then((importResponse: Response) => {
@@ -156,39 +262,11 @@ export class TelemetryServiceImpl implements TelemetryService {
                 return new GenerateImportTelemetryShare(this.dbService, this).execute(importResponse.body);
             }).then((importResponse: Response) => {
                 return true;
-            }).catch(() => {
+            }).catch((e) => {
+                console.error(e);
                 return false;
             })
         );
-    }
-
-    exportTelemetry(telemetryExportRequest: TelemetryExportRequest): Observable<TelemetryExportResponse> {
-        const exportTelemetryContext: ExportTelemetryContext = {destinationFolder: telemetryExportRequest.destinationFolder};
-        const telemetrySyncHandler: TelemetrySyncHandler = new TelemetrySyncHandler(
-            this.dbService,
-            this.telemetryConfig,
-            this.deviceInfo
-        );
-        return Observable.fromPromise(
-            telemetrySyncHandler.processEventsBatch().expand((processedEventsCount: number) =>
-                processedEventsCount ? telemetrySyncHandler.processEventsBatch() : Observable.empty()
-            ).toPromise().then(() => {
-                return new CreateTelemetryExportFile(this.fileService, this.deviceInfo).execute(exportTelemetryContext);
-            }).then((exportResponse: Response) => {
-                const res: TelemetryExportResponse = {exportedFilePath: 'yep'};
-                return new CopyDatabase(this.dbService).execute(exportResponse.body);
-            }).then((exportResponse: Response) => {
-                return new CreateMetaData(this.dbService, this.fileService, this.deviceInfo).execute(exportResponse.body);
-            }).then((exportResponse: Response) => {
-                return new CleanupExportedFile(this.dbService, this.fileService).execute(exportResponse.body);
-            }).then((exportResponse: Response) => {
-                return new CleanCurrentDatabase(this.dbService).execute(exportResponse.body);
-            }).then((exportResponse: Response) => {
-                return new GenerateShareTelemetry(this.dbService, this).execute(exportResponse.body);
-            }).then((exportResponse: Response<ExportTelemetryContext>) => {
-                const res: TelemetryExportResponse = {exportedFilePath: exportResponse.body.destinationDBFilePath!};
-                return res;
-            }));
     }
 
     getTelemetryStat(): Observable<TelemetryStat> {
@@ -202,62 +280,140 @@ export class TelemetryServiceImpl implements TelemetryService {
             FROM ${TelemetryProcessedEntry.TABLE_NAME}
         `;
 
-        return Observable.zip(
+        return zip(
             this.dbService.execute(telemetryCountQuery),
             this.dbService.execute(processedTelemetryCountQuery),
-            this.keyValueStore.getValue(TelemetryServiceImpl.KEY_TELEMETRY_LAST_SYNCED_TIME_STAMP)
-        ).map((results) => {
-            const telemetryCount: number = results[0][0]['TELEMETRY_COUNT'];
-            const processedTelemetryCount: number = results[1][0]['PROCESSED_TELEMETRY_COUNT'];
-            const lastSyncedTimestamp: number = results[2] ? parseInt(results[2]!, 10) : 0;
+            this.keyValueStore.getValue(TelemetryKeys.KEY_LAST_SYNCED_TIME_STAMP)
+        ).pipe(
+            map((results) => {
+                const telemetryCount: number = results[0][0]['TELEMETRY_COUNT'];
+                const processedTelemetryCount: number = results[1][0]['PROCESSED_TELEMETRY_COUNT'];
+                const lastSyncedTimestamp: number = results[2] ? parseInt(results[2]!, 10) : 0;
 
-            return {
-                unSyncedEventCount: telemetryCount + processedTelemetryCount,
-                lastSyncTime: lastSyncedTimestamp
-            };
-        });
+                return {
+                    unSyncedEventCount: telemetryCount + processedTelemetryCount,
+                    lastSyncTime: lastSyncedTimestamp
+                };
+            })
+        );
     }
 
-
-    sync(): Observable<TelemetrySyncStat> {
+    resetDeviceRegisterTTL(): Observable<undefined> {
         return new TelemetrySyncHandler(
             this.dbService,
-            this.telemetryConfig,
+            this.sdkConfig,
             this.deviceInfo,
+            this.sharedPreferences,
+            this.appInfoService,
+            this.deviceRegisterService,
             this.keyValueStore,
-            this.apiService
-        ).handle()
-            .mergeMap((telemetrySyncStat) =>
-                this.keyValueStore.setValue(TelemetryServiceImpl.KEY_TELEMETRY_LAST_SYNCED_TIME_STAMP, telemetrySyncStat.syncTime + '')
-                    .mapTo(telemetrySyncStat)
-            );
+            this.apiService,
+            this.networkQueue
+        ).resetDeviceRegisterTTL();
+    }
+
+    sync(telemetrySyncRequest: TelemetrySyncRequest = {
+        ignoreSyncThreshold: false,
+        ignoreAutoSyncMode: false
+    }): Observable<TelemetrySyncStat> {
+        return this.networkInfoService.networkStatus$.pipe(
+            take(1),
+            mergeMap((networkStatus) => {
+                if (networkStatus === NetworkStatus.ONLINE) {
+                    telemetrySyncRequest.ignoreSyncThreshold = true;
+                }
+
+                return of(telemetrySyncRequest);
+            }),
+            mergeMap((request) => {
+                return new TelemetrySyncHandler(
+                    this.dbService,
+                    this.sdkConfig,
+                    this.deviceInfo,
+                    this.sharedPreferences,
+                    this.appInfoService,
+                    this.deviceRegisterService,
+                    this.keyValueStore,
+                    this.apiService,
+                    this.networkQueue
+                ).handle(request).pipe(
+                    tap((syncStat) => {
+                        if (!syncStat.error && syncStat.syncedEventCount) {
+                            const now = Date.now();
+                            this.sharedPreferences.putString(TelemetryKeys.KEY_LAST_SYNCED_TIME_STAMP, now + '').toPromise();
+                            this._lastSyncedTimestamp$.next(now);
+                        }
+                    })
+                );
+            })
+        );
+    }
+
+    lastSyncedTimestamp(): Observable<number | undefined> {
+        return this._lastSyncedTimestamp$.asObservable();
+    }
+
+    buildContext(): Observable<Context> {
+        return this.profileService.getActiveProfileSession().pipe(
+            map((session) => {
+                return this.decorator.buildContext(
+                    session!.sid,
+                    this.frameworkService.activeChannelId!, new Context());
+            })
+        );
     }
 
     private decorateAndPersist(telemetry: SunbirdTelemetry.Telemetry): Observable<boolean> {
-        return Observable.zip(
+        return zip(
             this.profileService.getActiveProfileSession(),
             this.groupService.getActiveGroupSession()
-        ).mergeMap((sessions) => {
-            const profileSession: ProfileSession | undefined = sessions[0];
-            const groupSession: GroupSession | undefined = sessions[1];
+        ).pipe(
+            mergeMap((sessions) => {
+                const profileSession: ProfileSession | undefined = sessions[0];
+                const groupSession: GroupSessionDeprecated | undefined = sessions[1];
 
-            const insertQuery: InsertQuery = {
-                table: TelemetryEntry.TABLE_NAME,
-                modelJson: this.decorator.prepare(this.decorator.decorate(telemetry, profileSession!.uid,
-                    profileSession!.sid, groupSession && groupSession.gid), 1)
-            };
+                return this.keyValueStore.getValue(TelemetrySyncHandler.TELEMETRY_LOG_MIN_ALLOWED_OFFSET_KEY).pipe(
+                    mergeMap((offset?: string) => {
+                        offset = offset || '0';
 
-            return this.dbService.insert(insertQuery)
-                .do(() => this.eventsBusService.emit({
-                    namespace: EventNamespace.TELEMETRY,
-                    event: {
-                        type: TelemetryEventType.SAVE,
-                        payload: telemetry
-                    }
-                }))
-                .map((count) => count > 1);
-        });
+                        const insertQuery: InsertQuery = {
+                            table: TelemetryEntry.TABLE_NAME,
+                            modelJson: this.decorator.prepare(this.decorator.decorate(
+                                telemetry, profileSession, groupSession && groupSession.gid, Number(offset),
+                                this.frameworkService.activeChannelId, this.campaignParameters
+                            ), 1)
+                        };
+                        return this.dbService.insert(insertQuery).pipe(
+                            tap(() => this.eventsBusService.emit({
+                                namespace: EventNamespace.TELEMETRY,
+                                event: {
+                                    type: TelemetryEventType.SAVE,
+                                    payload: telemetry
+                                }
+                            })),
+                            map((count) => count > 1)
+                        );
+                    })
+                );
+            })
+        );
     }
 
+    updateCampaignParameters(params: CorrelationData[]) {
+        this.campaignParameters = params;
+    }
 
+    private getInitialUtmParameters(): Promise<CorrelationData[]> {
+        return new Promise<CorrelationData[]>((resolve, reject) => {
+            try {
+                sbutility.getUtmInfo((response: { val: CorrelationData[] }) => {
+                    resolve(response.val);
+                }, err => {
+                    reject(err);
+                });
+            } catch (xc) {
+                reject(xc);
+            }
+        });
+    }
 }

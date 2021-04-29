@@ -23,6 +23,7 @@ export declare class ReportSummary {
     hierarchyData: string;
     totalMaxScore: number;
     totalScore: number;
+    totalQuestionsScore: number;
 }
 
 export class Context {
@@ -32,6 +33,7 @@ export class Context {
     pdata: ProducerData;
     sid: string;
     did: string;
+    rollup: Rollup;
 }
 
 export class DeviceSpecification {
@@ -237,6 +239,61 @@ export namespace SunbirdTelemetry {
         }
     }
 
+    export class Summary extends Telemetry {
+        private static readonly EID = 'SUMMARY';
+
+        constructor(
+            type: string,
+            starttime: number,
+            endtime: number,
+            timespent: number,
+            pageviews: number,
+            interactions: number,
+            env: string,
+            mode?: string,
+            envsummary?: {
+                env: string,
+                timespent: number,
+                visits: number
+            }[],
+            eventsummary?: {
+                id: string,
+                count: number
+            } [],
+            pagesummary?: {
+                id: string,
+                type: string,
+                env: string,
+                timespent: number,
+                visits: number
+            }[],
+            extra?: {
+                id: string,
+                value: string
+            }[],
+            correlationData: Array<CorrelationData> = [],
+            objId: string = '',
+            objType: string = '',
+            objVer: string = '',
+            rollup: Rollup = {},
+        ) {
+            super(Summary.EID);
+            this.edata = {
+                type, starttime, endtime, timespent, pageviews, interactions,
+                ...(mode ? {mode} : {}),
+                ...(envsummary ? {envsummary} : {}),
+                ...(eventsummary ? {eventsummary} : {}),
+                ...(pagesummary ? {pagesummary} : {}),
+                ...(extra ? {extra} : {})
+            };
+            // TODO need to check
+            this.context.cdata = correlationData;
+            this.context.env = env;
+            this.object = new TelemetryObject(objId, objType, objVer);
+            this.object.rollup = rollup ? rollup : {};
+        }
+    }
+
     export class Interact extends Telemetry {
         private static readonly EID = 'INTERACT';
 
@@ -360,7 +417,12 @@ export namespace SunbirdTelemetry {
 
         constructor(dir: string | undefined,
                     type: string | undefined,
-                    items: Array<{ [index: string]: any }> | undefined) {
+                    items: Array<{ [index: string]: any }> | undefined,
+                    correlationData: Array<CorrelationData> = [],
+                    objId: string = '',
+                    objType: string = '',
+                    objVer: string = '',
+                    rollUp: Rollup = new Rollup()) {
             super(Share.EID);
 
             this.edata = {
@@ -368,9 +430,12 @@ export namespace SunbirdTelemetry {
                 ...(type ? {type: type} : {}),
                 ...(items ? {items: items} : {})
             };
+            this.context.cdata = correlationData;
+            this.object = new TelemetryObject(objId ? objId : '', objType ? objType : '', objVer ? objVer : '');
+            this.object.rollup = rollUp;
         }
 
-        addItem(type: ShareItemType, origin: string, identifier: string, pkgVersion: number,
+        addItem(type: ShareItemType | string, origin: string, identifier: string, pkgVersion: number,
                 transferCount: number, size: string) {
             const item: { [index: string]: any } = {};
             item['origin'] = origin;
@@ -407,11 +472,15 @@ export namespace SunbirdTelemetry {
                     env: string,
                     objId: string = '',
                     objType: string = '',
-                    objVer: string = '') {
+                    objVer: string = '',
+                    commentid: string | undefined,
+                    commenttxt: string | undefined) {
             super(Feedback.EID);
 
             this.edata = {
                 ...(rating ? {rating: rating} : {}),
+                ...(commentid ? {commentid: commentid} : {}),
+                ...(commenttxt ? {commenttxt: commenttxt} : {}),
                 ...(comments ? {comments: comments} : {}),
             };
             this.context.env = env;
@@ -427,18 +496,23 @@ export namespace SunbirdTelemetry {
                     actor: Actor,
                     currentState: AuditState,
                     updatedProperties: string[] | undefined,
+                    type: string | undefined,
                     objId: string = '',
                     objType: string = '',
-                    objVer: string = '') {
+                    objVer: string = '',
+                    correlationData: Array<CorrelationData> = [],
+                    rollup: Rollup = {}) {
             super(Audit.EID);
 
             this.edata = {
                 ...{state: currentState},
                 ...(updatedProperties ? {props: updatedProperties} : {}),
+                ...{type}
             };
+            this.context.cdata = correlationData;
             this.context.env = env;
             this.object = new TelemetryObject(objId, objType, objVer);
-            this.object.rollup = {};
+            this.object.rollup = rollup || {};
             this.actor = actor;
         }
     }

@@ -1,8 +1,6 @@
-import { TelemetryService } from './../../telemetry/def/telemetry-service';
-import {Profile, ProfileSource} from './profile';
+import {Profile, ProfileSource, UserFeedEntry} from './profile';
 import {Observable} from 'rxjs';
 import {TenantInfo} from './tenant-info';
-import {ServerProfileSearchCriteria} from './server-profile-search-criteria';
 import {ServerProfile} from './server-profile';
 import {UpdateServerProfileInfoRequest} from './update-server-profile-info-request';
 import {GetAllProfileRequest} from './get-all-profile-request';
@@ -17,25 +15,43 @@ import {GenerateOtpRequest} from './generate-otp-request';
 import {VerifyOtpRequest} from './verify-otp-request';
 import {LocationSearchCriteria} from './location-search-criteria';
 import {LocationSearchResult} from './location-search-result';
-import {SdkServiceOnInitDelegate} from '../../sdk-service-on-init-delegate';
 import {ProfileExportRequest} from './profile-export-request';
 import {ProfileExportResponse} from './profile-export-response';
 import {ProfileImportRequest} from './profile-import-request';
 import {ProfileImportResponse} from './profile-import-response';
+import {SdkServicePreInitDelegate} from '../../sdk-service-pre-init-delegate';
+import {TenantInfoRequest} from './tenant-info-request';
+import {MergeServerProfilesRequest} from './merge-server-profiles-request';
+import {UserMigrateResponse} from './user-migrate-response';
+import {UserMigrateRequest} from './user-migrate-request';
+import {ManagedProfileManager} from '../handler/managed-profile-manager';
+import {CheckUserExistsResponse} from './check-user-exists-response';
+import {CheckUserExistsRequest} from './check-user-exists-request';
+import {UpdateServerProfileDeclarationsResponse} from './update-server-profile-declarations-response';
+import {UpdateServerProfileDeclarationsRequest} from './update-server-profile-declarations-request';
+import {Consent} from '@project-sunbird/client-services/models';
+import {ReadConsentResponse, UpdateConsentResponse} from '@project-sunbird/client-services/services/user';
+import {UpdateUserFeedRequest} from './update-user-feed-request';
+import {DeleteUserFeedRequest} from './delete-user-feed-request';
+import {UpdateServerProfileResponse} from './update-server-profile-response';
 
+export {Consent} from '@project-sunbird/client-services/models';
+export {ReadConsentResponse, UpdateConsentResponse} from '@project-sunbird/client-services/services/user';
 
-export interface ProfileService extends SdkServiceOnInitDelegate {
+export interface ProfileService extends SdkServicePreInitDelegate {
+    readonly managedProfileManager: ManagedProfileManager;
+
+    checkServerProfileExists(request: CheckUserExistsRequest): Observable<CheckUserExistsResponse>;
+
     createProfile(profile: Profile, profileSource: ProfileSource): Observable<Profile>;
 
     deleteProfile(uid: string): Observable<undefined>;
 
     updateProfile(profile: Profile): Observable<Profile>;
 
-    updateServerProfile(updateServerProfileRequest: UpdateServerProfileInfoRequest): Observable<Profile>;
+    updateServerProfile(updateServerProfileRequest: UpdateServerProfileInfoRequest): Observable<UpdateServerProfileResponse>;
 
-    getTenantInfo(): Observable<TenantInfo>;
-
-    getServerProfiles(searchCriteria: ServerProfileSearchCriteria): Observable<ServerProfile[]>;
+    getTenantInfo(tenantInfoRequest: TenantInfoRequest): Observable<TenantInfo>;
 
     getAllProfiles(profileRequest?: GetAllProfileRequest): Observable<Profile[]>;
 
@@ -65,6 +81,25 @@ export interface ProfileService extends SdkServiceOnInitDelegate {
 
     importProfile(profileImportRequest: ProfileImportRequest): Observable<ProfileImportResponse>;
 
-    // @internal
-    registerTelemetryService(telemetryService: TelemetryService): void;
+    mergeServerProfiles(mergeServerProfilesRequest: MergeServerProfilesRequest): Observable<undefined>;
+
+    isDefaultChannelProfile(): Observable<boolean>;
+
+    getUserFeed(): Observable<UserFeedEntry[]>;
+
+    updateUserFeedEntry(
+        updateUserFeedRequest: UpdateUserFeedRequest
+    ): Observable<boolean>;
+
+    deleteUserFeedEntry(
+        deleteUserFeedRequest: DeleteUserFeedRequest
+    ): Observable<boolean>;
+
+    userMigrate(userMigrateRequest: UserMigrateRequest): Observable<UserMigrateResponse>;
+
+    updateServerProfileDeclarations(updateServerProfileDeclarationsRequest: UpdateServerProfileDeclarationsRequest): Observable<UpdateServerProfileDeclarationsResponse>;
+
+    updateConsent(userConsent: Consent): Observable<UpdateConsentResponse>;
+
+    getConsent(userConsent: Consent): Observable<ReadConsentResponse>;
 }

@@ -20,6 +20,10 @@ export enum MimeType {
     ECML = 'application/vnd.ekstep.ecml-archive',
     HTML = 'application/vnd.ekstep.html-archive',
     COLLECTION = 'application/vnd.ekstep.content-collection',
+    H5P = 'application/vnd.ekstep.h5p-archive',
+    VIDEO = 'video/mp4',
+    YOUTUBE = 'video/x-youtube',
+    WEBM = 'video/webm',
 
     ZIP = 'application/zip',
     TXT = 'text/plain',
@@ -55,7 +59,6 @@ export enum FileExtension {
 }
 
 export enum ContentImportStatus {
-
     NOT_FOUND = -1,
     ENQUEUED_FOR_DOWNLOAD = 0,
     DOWNLOAD_STARTED = 1,
@@ -67,7 +70,6 @@ export enum ContentImportStatus {
     CONTENT_EXPIRED = 7, // This is for draft content.
     ALREADY_EXIST = 8,
     IMPORT_COMPLETED = 100
-
 }
 
 export enum ContentErrorCode {
@@ -86,7 +88,7 @@ export enum ContentErrorCode {
     EXPORT_FAILED_COPY_ASSET = 'EXPORT_FAILED_COPY_ASSET',
     EXPORT_FAILED_MEMORY_NOT_SUFFICIENT = 'EXPORT_FAILED_MEMORY_NOT_SUFFICIENT',
     EXPORT_FAILED_WRITING_MANIFEST = 'EXPORT_FAILED_WRITE_MANIFEST',
-    EXPORT_FAILED_ECAR_BUNDLE= 'EXPORT_FAILED_ECAR_BUNDLE',
+    EXPORT_FAILED_ECAR_BUNDLE = 'EXPORT_FAILED_ECAR_BUNDLE',
     EXPORT_FAILED_NOTHING_TO_EXPORT = 'EXPORT_FAILED_NOTHING_TO_EXPORT',
     EXPORT_FAILED_DELETING_ECAR = 'EXPORT_FAILED_DELETING_ECAR',
 }
@@ -96,3 +98,6 @@ export enum ErrorCode {
     IMPORT_FAILED = 'IMPORT_FAILED',
 }
 
+export enum FileName {
+    MANIFEST = 'manifest.json'
+}

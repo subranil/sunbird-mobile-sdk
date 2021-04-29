@@ -1,25 +1,23 @@
 import {ContentEntry} from '../db/schema';
-import Queue from 'typescript-collections/dist/lib/Queue';
 import {ContentUtil} from '../util/content-util';
-import COLUMN_NAME_LOCAL_DATA = ContentEntry.COLUMN_NAME_LOCAL_DATA;
-import {Visibility} from '../util/content-constants';
-import COLUMN_NAME_IDENTIFIER = ContentEntry.COLUMN_NAME_IDENTIFIER;
-import {DeviceInfo} from '../../util/device/def/device-info';
-import moment from 'moment';
-import {FileService} from '../../util/file/def/file-service';
-import COLUMN_NAME_LOCAL_LAST_UPDATED_ON = ContentEntry.COLUMN_NAME_LOCAL_LAST_UPDATED_ON;
-import COLUMN_NAME_SERVER_LAST_UPDATED_ON = ContentEntry.COLUMN_NAME_SERVER_LAST_UPDATED_ON;
-import COLUMN_NAME_REF_COUNT = ContentEntry.COLUMN_NAME_REF_COUNT;
+import * as dayjs from 'dayjs';
 import {DbService} from '../../db';
-import {Observable} from 'rxjs';
 import {ArrayUtil} from '../../util/array-util';
+import {FileService} from '../../util/file/def/file-service';
+import {DeviceInfo} from '../../util/device';
+import {FileName, Visibility} from '..';
+import COLUMN_NAME_LOCAL_DATA = ContentEntry.COLUMN_NAME_LOCAL_DATA;
+import COLUMN_NAME_IDENTIFIER = ContentEntry.COLUMN_NAME_IDENTIFIER;
+import COLUMN_NAME_REF_COUNT = ContentEntry.COLUMN_NAME_REF_COUNT;
 
 export class ImportNExportHandler {
     private static readonly EKSTEP_CONTENT_ARCHIVE = 'ekstep.content.archive';
     private static readonly SUPPORTED_MANIFEST_VERSION = '1.1';
 
     constructor(private deviceInfo: DeviceInfo,
-                private dbService?: DbService) {
+                private dbService?: DbService,
+                private fileService?: FileService
+    ) {
 
     }
 
@@ -38,7 +36,7 @@ export class ImportNExportHandler {
             if (ContentUtil.hasChildren(item)) {
                 // store children identifiers
                 const childContentIdentifiers: string[] = ContentUtil.getChildContentsIdentifiers(item);
-                childIdentifiers =  childIdentifiers.concat(childContentIdentifiers);
+                childIdentifiers = childIdentifiers.concat(childContentIdentifiers);
             }
 
             allContentsIdentifier.push(contentInDb[COLUMN_NAME_IDENTIFIER]);
@@ -59,30 +57,54 @@ export class ImportNExportHandler {
         return items;
     }
 
-    public async getContentExportDBModeltoExport(contentIds: string[]): Promise<ContentEntry.SchemaMap[]> {
-        const contentModelToExport: ContentEntry.SchemaMap[] = [];
-        const queue: Queue<ContentEntry.SchemaMap> = new Queue();
-
-        const contentWithAllChildren: ContentEntry.SchemaMap[] = [];
-        const contentsInDb: ContentEntry.SchemaMap[] = await this.findAllContentsWithIdentifiers(contentIds);
-        contentsInDb.forEach((contentInDb) => {
-            queue.add(contentInDb);
-        });
-        let node: ContentEntry.SchemaMap;
-        while (!queue.isEmpty()) {
-            node = queue.dequeue()!;
-            if (ContentUtil.hasChildren(node[COLUMN_NAME_LOCAL_DATA])) {
-                const childContentsIdentifiers: string[] = ContentUtil.getChildContentsIdentifiers(node[COLUMN_NAME_LOCAL_DATA]);
-                const contentModelListInDB: ContentEntry.SchemaMap[] = await this.findAllContentsWithIdentifiers(
-                    childContentsIdentifiers);
-                if (contentModelListInDB && contentModelListInDB.length > 0) {
-                    contentModelListInDB.forEach((contentModelInDb) => {
-                        queue.add(contentModelInDb);
-                    });
-                }
+    populateItemList(contentWithAllChildren: { [key: string]: any }[]): { [key: string]: any }[] {
+        const items: any[] = [];
+        const allContentsIdentifier: string[] = [];
+        let childIdentifiers: string[] = [];
+        const contentIndex: { [key: string]: any } = {};
+        contentWithAllChildren.forEach((item) => {
+            contentIndex[item['identifier']] = item;
+            ContentUtil.addViralityMetadataIfMissing(item, this.deviceInfo!.getDeviceID());
+            // get item's children only to mark children with visibility as Parent
+            if (ContentUtil.hasChildren(item)) {
+                // store children identifiers
+                const childContentIdentifiers: string[] = ContentUtil.getChildContentsIdentifiers(item);
+                childIdentifiers = childIdentifiers.concat(childContentIdentifiers);
             }
-            contentModelToExport.push(node);
+
+            allContentsIdentifier.push(item['identifier']);
+        });
+        try {
+            allContentsIdentifier.forEach((identifier) => {
+                const contentData = contentIndex[identifier];
+                if (ArrayUtil.contains(childIdentifiers, identifier)) {
+                    contentData['visibility'] = Visibility.PARENT.valueOf();
+                }
+                items.push(contentData);
+            });
+        } catch (e) {
+            console.log(e);
         }
+
+        return items;
+    }
+
+    public async getContentExportDBModelToExport(contentIds: string[]): Promise<ContentEntry.SchemaMap[]> {
+        let contentModelToExport: ContentEntry.SchemaMap[] = [];
+        // const queue: Queue<ContentEntry.SchemaMap> = new Queue();
+        const contentsInDb: ContentEntry.SchemaMap[] = await this.findAllContentsWithIdentifiers(contentIds);
+        const manifestPath = ContentUtil.getBasePath(contentsInDb[0][ContentEntry.COLUMN_NAME_PATH]!);
+        await this.fileService!.readAsText(manifestPath, FileName.MANIFEST.valueOf())
+            .then(async (fileContents) => {
+                const childContents = JSON.parse(fileContents).archive.items;
+                const childIdentifiers: string[] = [];
+                childContents.forEach(element => {
+                    childIdentifiers.push(element.identifier);
+                });
+                contentModelToExport = await this.findAllContentsWithIdentifiers(childIdentifiers, true);
+            }).catch((err) => {
+                console.log('fileRead error', err);
+            });
         return Promise.resolve(ContentUtil.deDupe(contentModelToExport, 'identifier'));
     }
 
@@ -96,16 +118,24 @@ export class ImportNExportHandler {
         // Initialize manifest
         manifest['id'] = ImportNExportHandler.EKSTEP_CONTENT_ARCHIVE;
         manifest['ver'] = ImportNExportHandler.SUPPORTED_MANIFEST_VERSION;
-        manifest['ts'] = moment(Date.now()).format('YYYY-MM-DDTHH:mm:ss[Z]');
+        manifest['ts'] = dayjs().format('YYYY-MM-DDTHH:mm:ss[Z]');
         manifest['archive'] = archive;
         return manifest;
     }
 
-    findAllContentsWithIdentifiers(identifiers: string[]): Promise<ContentEntry.SchemaMap[]> {
+    private findAllContentsWithIdentifiers(identifiers: string[], sort?): Promise<ContentEntry.SchemaMap[]> {
+        let orderByString = '';
+        if (sort) {
+            if (identifiers.length) {
+                orderByString = identifiers.reduce((acc, identifier, index) => {
+                    return acc + ` WHEN '${identifier}' THEN ${index}`;
+                }, ` ORDER BY CASE ${COLUMN_NAME_IDENTIFIER}`) + ' END';
+            }
+        }
+
         const identifiersStr = ArrayUtil.joinPreservingQuotes(identifiers);
-        const orderby = ` order by ${COLUMN_NAME_LOCAL_LAST_UPDATED_ON} desc, ${COLUMN_NAME_SERVER_LAST_UPDATED_ON} desc`;
         const filter = ` where ${COLUMN_NAME_IDENTIFIER} in (${identifiersStr}) AND ${COLUMN_NAME_REF_COUNT} > 0`;
-        const query = `select * from ${ContentEntry.TABLE_NAME} ${filter} ${orderby}`;
+        const query = `select * from ${ContentEntry.TABLE_NAME} ${filter} ${orderByString}`;
         return this.dbService!.execute(query).toPromise();
     }
 }

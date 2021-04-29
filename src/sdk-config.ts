@@ -13,15 +13,21 @@ import {TelemetryConfig} from './telemetry/config/telemetry-config';
 import {SharedPreferencesConfig} from './util/shared-preferences';
 import {PlayerConfig} from './player/def/response';
 import {EventsBusConfig} from './events-bus/config/events-bus-config';
+import {ErrorLoggerConfig} from './error/config/error-logger-config';
+import {FaqServiceConfig} from './faq';
+import {DeviceRegisterConfig} from './device-register';
 
 export interface SdkConfig {
+    platform: 'cordova' | 'web';
     apiConfig: ApiConfig;
     dbConfig: DbConfig;
+    deviceRegisterConfig: DeviceRegisterConfig;
     fileConfig: FileConfig;
     contentServiceConfig: ContentServiceConfig;
     courseServiceConfig: CourseServiceConfig;
     formServiceConfig: FormServiceConfig;
     frameworkServiceConfig: FrameworkServiceConfig;
+    faqServiceConfig: FaqServiceConfig;
     profileServiceConfig: ProfileServiceConfig;
     pageServiceConfig: PageServiceConfig;
     appConfig: AppConfig;
@@ -30,4 +36,5 @@ export interface SdkConfig {
     sharedPreferencesConfig: SharedPreferencesConfig;
     playerConfig?: PlayerConfig;
     eventsBusConfig: EventsBusConfig;
+    errorLoggerConfig: ErrorLoggerConfig;
 }

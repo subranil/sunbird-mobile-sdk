@@ -1,4 +1,4 @@
-import {ContentRequest, ContentSortCriteria, SortOrder, State, Visibility} from '..';
+import {ContentRequest, ContentSortCriteria, MimeType, SortOrder, State, Visibility} from '..';
 import {ContentAccessEntry, ContentEntry, ContentMarkerEntry} from '../db/schema';
 import {ArrayUtil} from '../../util/array-util';
 
@@ -6,40 +6,60 @@ export class GetContentsHandler {
 
 
     getAllLocalContentQuery(request: ContentRequest): string {
-        if (!request.contentTypes || !request.contentTypes.length) {
-            request.contentTypes = ['Story', 'Worksheet', 'Game', 'Resource', 'Collection', 'TextBook'];
-        }
-        if (request.resourcesOnly) {
-            request.contentTypes = ['Story', 'Worksheet', 'Game', 'Resource'];
+        if (!request.primaryCategories || !request.primaryCategories.length) {
+            request.primaryCategories = [
+                'Course',
+                'Learning Resource',
+                'Explanation Content',
+                'Teacher Resource',
+                'Content Playlist',
+                'Digital Textbook',
+                'Practice Question Set',
+                'eTextBook',
+                'Course Assessment'
+            ];
         }
         const uid = request.uid;
-        const contentTypesStr = ArrayUtil.joinPreservingQuotes(request.contentTypes);
-        let contentTypeFilter = `c.${ContentEntry.COLUMN_NAME_CONTENT_TYPE} IN(${contentTypesStr.toLowerCase()})`;
+
         const contentVisibilityFilter = request.resourcesOnly ? '' :
             `c.${ContentEntry.COLUMN_NAME_VISIBILITY} = '${Visibility.DEFAULT.valueOf()}' AND`;
         const artifactAvailabilityFilter = `c.${ContentEntry.COLUMN_NAME_CONTENT_STATE} = '${State.ARTIFACT_AVAILABLE.valueOf()}'`;
-        let filter = `${contentVisibilityFilter} ${artifactAvailabilityFilter} AND ${contentTypeFilter}`;
+        let filter = `${contentVisibilityFilter} ${artifactAvailabilityFilter}`;
+
+        if (request.resourcesOnly) {
+            const mimeTypeFilter = `c.${ContentEntry.COLUMN_NAME_MIME_TYPE} != '${MimeType.COLLECTION.valueOf()}'`;
+            filter = `${filter}  AND (${mimeTypeFilter})`;
+        } else {
+            const primaryCategoryString = ArrayUtil.joinPreservingQuotes(request.primaryCategories);
+            const primaryCategoryFilter = `c.${ContentEntry.COLUMN_NAME_PRIMARY_CATEGORY} IN(${primaryCategoryString.toLowerCase()})`;
+            filter = `${filter}  AND (${primaryCategoryFilter})`;
+        }
+
         const audienceFilter = this.getAudienceFilter(request.audience!);
         const pragmaFilter = this.getPragmaFilter(request.exclPragma!, request.pragma!);
 
+        const offlineSearchQuery = this.generateFieldMatchQuery(request);
         if (audienceFilter) {
             filter = `${filter}  AND (${audienceFilter})`;
         }
         if (pragmaFilter) {
             filter = `${filter}  AND (${pragmaFilter})`;
         }
+
+        if (offlineSearchQuery) {
+            filter = `${filter}  AND (${offlineSearchQuery})`;
+        }
         let whereClause = `WHERE (${filter})`;
         let query = '';
         const orderBy = request.resourcesOnly ? '' : this.generateSortByQuery(request.sortCriteria!, uid!);
         if (request.recentlyViewed) {
             if (uid) {
-                contentTypeFilter = `ca.${ContentAccessEntry.COLUMN_NAME_CONTENT_TYPE} IN (${contentTypesStr.toLowerCase()})`;
                 if (request.localOnly) {
-                    filter = `ca.${ContentAccessEntry.COLUMN_NAME_UID} = '${uid}' AND ${contentTypeFilter}
-                     AND ${artifactAvailabilityFilter}`;
+                    filter = `ca.${ContentAccessEntry.COLUMN_NAME_UID} = '${uid}' AND ${artifactAvailabilityFilter}
+                    AND cm.${ContentEntry.COLUMN_NAME_MIME_TYPE} NOT IN ('${MimeType.COLLECTION.valueOf()}', '')`;
                 } else {
-                    filter = `ca.${ContentAccessEntry.COLUMN_NAME_UID} = '${uid}' AND ${contentTypeFilter}`;
-
+                    filter = `ca.${ContentAccessEntry.COLUMN_NAME_UID} = '${uid}'
+                    AND cm.${ContentEntry.COLUMN_NAME_MIME_TYPE} NOT IN ('${MimeType.COLLECTION.valueOf()}', '')`;
                 }
                 whereClause = `WHERE (${filter})`;
                 query = this.getRecentlyViewedQuery(whereClause, orderBy, request.limit!);
@@ -51,8 +71,8 @@ export class GetContentsHandler {
                 query = `SELECT c.* FROM ${ContentEntry.TABLE_NAME} c ${whereClause} ${orderBy}`;
             }
         }
-        return query;
 
+        return query;
     }
 
     private getAudienceFilter(audience: string[]): string {
@@ -83,8 +103,9 @@ export class GetContentsHandler {
         return `SELECT c.*, ca.${ContentAccessEntry.COLUMN_NAME_EPOCH_TIMESTAMP},
                 cm.${ContentMarkerEntry.COLUMN_NAME_DATA} FROM ${ContentAccessEntry.TABLE_NAME} ca LEFT JOIN
                 ${ContentMarkerEntry.TABLE_NAME} cm ON
-                cm.${ContentMarkerEntry.COLUMN_NAME_CONTENT_IDENTIFIER} = ca.${ContentAccessEntry.COLUMN_NAME_CONTENT_IDENTIFIER} LEFT JOIN
-                ${ContentEntry.TABLE_NAME}  c ON
+                (cm.${ContentMarkerEntry.COLUMN_NAME_UID} = ca.${ContentAccessEntry.COLUMN_NAME_UID}
+                AND cm.${ContentMarkerEntry.COLUMN_NAME_CONTENT_IDENTIFIER} = ca.${ContentAccessEntry.COLUMN_NAME_CONTENT_IDENTIFIER})
+                LEFT JOIN ${ContentEntry.TABLE_NAME}  c ON
                 c.${ContentEntry.COLUMN_NAME_IDENTIFIER} = ca.${ContentAccessEntry.COLUMN_NAME_CONTENT_IDENTIFIER}
                 ${whereClause} ${orderBy} LIMIT ${limit}`;
     }
@@ -141,6 +162,37 @@ export class GetContentsHandler {
         }
         orderByQuery = orderByQuery.concat(`${columnName} ${sortOrder}`);
         return orderByQuery;
+    }
+
+    private generateFieldMatchQuery(request: ContentRequest): string {
+        const fields = [
+            { field: 'board', column: ContentEntry.COLUMN_NAME_BOARD },
+            { field: 'medium', column: ContentEntry.COLUMN_NAME_MEDIUM },
+            { field: 'grade', column: ContentEntry.COLUMN_NAME_GRADE },
+            { field: 'dialcodes', column: ContentEntry.COLUMN_NAME_DIALCODES },
+            { field: 'childNodes', column: ContentEntry.COLUMN_NAME_CHILD_NODES }
+        ];
+
+        return fields.reduce<string[]>((acc, {field, column}) => {
+            if (request[field] && request[field].length) {
+                acc.push(this.generateLikeQuery(request[field], column));
+            }
+
+            return acc;
+        }, []).join(` AND `);
+    }
+
+    private generateLikeQuery(data: string[], coloumnName: string): string {
+        let likeQuery = '';
+        const initialQuery = `${coloumnName} LIKE `;
+        for (let i = 0; i < data.length; i++) {
+            if (i < data.length - 1) {
+                likeQuery = likeQuery.concat(initialQuery, `'%%~${data[i].toLowerCase().trim()}~%%' OR `);
+            } else {
+                likeQuery = likeQuery.concat(initialQuery, `'%%~${data[i].toLowerCase().trim()}~%%' `);
+            }
+        }
+        return likeQuery;
     }
 
 

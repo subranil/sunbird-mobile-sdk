@@ -1,8 +1,52 @@
 const path = require('path');
-const UglifyJsPlugin = require('uglifyjs-webpack-plugin');
+
+const webpackRxjsExternals = function rxjsExternalsFactory() {
+    return function rxjsExternals(context, request, callback) {
+        if (request.match(/^rxjs(\/|$)/)) {
+            var parts = request.split('/');
+            if (parts.length > 2) {
+                console.warn('webpack-rxjs-externals no longer supports v5-style deep imports like rxjs/operator/map etc. It only supports rxjs v6 pipeable imports via rxjs/operators or from the root.');
+            }
+
+            return callback(null, {
+                root: parts,
+                commonjs: request,
+                commonjs2: request,
+                amd: request
+            });
+        }
+
+        callback();
+    };
+};
+
+const clientServicesExternals = function clientServicesExternalsFactory() {
+    return function rxjsExternals(context, request, callback) {
+        if (request.match(/^@project-sunbird\/client-services(\/|$)/)) {
+            var parts = request.split('/');
+            if (parts.length > 2) {
+                console.warn('webpack-rxjs-externals no longer supports v5-style deep imports like rxjs/operator/map etc. It only supports rxjs v6 pipeable imports via rxjs/operators or from the root.');
+            }
+
+            return callback(null, {
+                root: parts,
+                commonjs: request,
+                commonjs2: request,
+                amd: request
+            });
+        }
+
+        callback();
+    };
+};
 
 const config = {
     entry: './src/index.ts',
+    externals: [
+        webpackRxjsExternals(),
+        clientServicesExternals()
+        // other externals here
+    ],
     output: {
         filename: 'index.js',
         path: path.resolve(__dirname, 'dist'),
@@ -22,9 +66,7 @@ const config = {
         extensions: ['.tsx', '.ts', '.js']
     },
     optimization: {
-        minimizer: [new UglifyJsPlugin({
-            sourceMap: true
-        })],
+        minimize: true
     },
     performance: {
         hints: false

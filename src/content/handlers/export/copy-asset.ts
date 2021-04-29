@@ -1,30 +1,45 @@
-import {FileService} from '../../../util/file/def/file-service';
-import {ExportContentContext} from '../..';
-import {Entry} from '../../../util/file';
+import {ContentErrorCode, ExportContentContext} from '../..';
 import {ContentEntry} from '../../db/schema';
 import {ContentUtil} from '../../util/content-util';
 import {Response} from '../../../api';
-import {ContentErrorCode} from '../../util/content-constants';
-import COLUMN_NAME_PATH = ContentEntry.COLUMN_NAME_PATH;
 
 export class CopyAsset {
-    constructor(private fileService: FileService) {
+
+    constructor() {
     }
 
     public async execute(exportContentContext: ExportContentContext): Promise<Response> {
         const response: Response = new Response();
         try {
             let i = 0;
-            for (const element of exportContentContext.contentModelsToExport) {
+            let subContentsInDb: ContentEntry.SchemaMap[] = [];
+            if (exportContentContext.subContentIds != null && exportContentContext.subContentIds.length > 0) {
+                subContentsInDb = this.excludeContentForSubModule(exportContentContext.contentModelsToExport,
+                    exportContentContext.subContentIds);
+            }
+
+            let contentModelsToExport: ContentEntry.SchemaMap[] = exportContentContext.contentModelsToExport;
+            if (subContentsInDb && subContentsInDb.length > 0) {
+                contentModelsToExport = subContentsInDb;
+            }
+
+            for (const element of contentModelsToExport) {
                 const contentInDb = element as ContentEntry.SchemaMap;
                 const contentData = exportContentContext.items![i];
                 const appIcon = contentData['appIcon'];
-                if (appIcon) {
-                    try {
-                    await this.copyAsset(ContentUtil.getBasePath(contentInDb[COLUMN_NAME_PATH]!),
-                        exportContentContext.tmpLocationPath!, appIcon);
-                    } catch (e) {
-                        console.error(e);
+                const setPreviewUrl = contentData['itemSetPreviewUrl'];
+
+                for (const item of [appIcon, setPreviewUrl]) {
+                    if (item && !item.startsWith('https:')) {
+                        try {
+                            await this.copyFile(
+                                contentInDb[ContentEntry.COLUMN_NAME_PATH]!,
+                                exportContentContext.tmpLocationPath!,
+                                item
+                            );
+                        } catch (e) {
+                            console.error(e);
+                        }
                     }
                 }
 
@@ -34,12 +49,11 @@ export class CopyAsset {
                     const artifactUrl: string = contentData['artifactUrl'];
                     if (artifactUrl) {
                         try {
-                            await this.copyAsset(ContentUtil.getBasePath(contentInDb[COLUMN_NAME_PATH]!),
+                            await this.copyFile(contentInDb[ContentEntry.COLUMN_NAME_PATH]!,
                                 exportContentContext.tmpLocationPath!, artifactUrl);
                         } catch (e) {
                             console.error(e);
                         }
-
                     }
                 }
                 i++;
@@ -50,14 +64,28 @@ export class CopyAsset {
             response.errorMesg = ContentErrorCode.EXPORT_FAILED_COPY_ASSET;
             throw response;
         }
-
     }
 
-    private async copyAsset(sourcePath: string, destinationPath: string, fileName: string): Promise<Entry> {
-        return this.fileService.exists(sourcePath.concat(fileName)).then((entry: Entry) => {
-            return this.fileService.createDir(destinationPath, true);
-        }).then(() => {
-            return this.fileService.copyFile(sourcePath, fileName, destinationPath, fileName);
+    private excludeContentForSubModule(contentsInDb: ContentEntry.SchemaMap[], subCollectionIds?: string[]) {
+        const subCollectionContents: ContentEntry.SchemaMap[] = [];
+        contentsInDb.forEach(contentInDb => {
+            const identifier = contentInDb['identifier'];
+            if (subCollectionIds && subCollectionIds.indexOf(identifier) > -1) {
+                subCollectionContents.push(contentInDb);
+            }
+        });
+        return subCollectionContents;
+    }
+
+    private async copyFile(sourcePath: string, destinationPath: string, fileName: string): Promise<boolean> {
+        return new Promise<boolean>((resolve, reject) => {
+            sbutility.copyFile(sourcePath, destinationPath, fileName,
+                () => {
+                    resolve();
+                }, err => {
+                    console.error(err);
+                    resolve(err);
+                });
         });
     }
 }

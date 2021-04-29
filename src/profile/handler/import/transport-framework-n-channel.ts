@@ -1,9 +1,7 @@
 import {DbService} from '../../../db';
 import {ImportProfileContext} from '../../def/import-profile-context';
-import {ProfileEntry, UserEntry} from '../../db/schema';
 import {Response} from '../../../api';
-import {GroupProfile} from '../../../group';
-import {GroupProfileEntry} from '../../../group/db/schema';
+import {GroupProfileEntry} from '../../../group-deprecated/db/schema';
 import {KeyValueStoreEntry} from '../../../key-value-store/db/schema';
 
 export class TransportFrameworkNChannel {
@@ -36,7 +34,7 @@ export class TransportFrameworkNChannel {
                 await this.dbService.insert({
                     table: KeyValueStoreEntry.TABLE_NAME,
                     modelJson: keyValueStoreEntryInExternalDb
-                });
+                }).toPromise();
             }
         });
 

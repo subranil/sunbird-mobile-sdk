@@ -1,16 +1,15 @@
 import {DbService, Migration} from '..';
 import {EventPriorityEntry, TelemetryEntry, TelemetryProcessedEntry, TelemetryTagEntry} from '../../telemetry/db/schema';
-import {ImportedMetadataEntry,
-        ProfileEntry,
-        UserEntry,
-        LearnerAssessmentsEntry,
-        LearnerSummaryEntry,
-       } from '../../profile/db/schema';
-import {GroupEntry, GroupProfileEntry} from '../../group/db/schema';
+import {ImportedMetadataEntry, LearnerAssessmentsEntry, LearnerSummaryEntry, ProfileEntry, UserEntry} from '../../profile/db/schema';
+import {GroupEntry, GroupProfileEntry} from '../../group-deprecated/db/schema';
 import {PartnerEntry} from '../../partner/db/schema';
 import {ContentAccessEntry, ContentEntry, ContentFeedbackEntry, ContentMarkerEntry} from '../../content/db/schema';
 import {NotificationEntry} from '../../notification/db/schema';
 import {KeyValueStoreEntry} from '../../key-value-store/db/schema';
+import {ErrorStackEntry} from '../../error/db/schema';
+import {SearchHistoryEntry} from '../../util/search-history/db/schema';
+import {CourseAssessmentEntry} from '../../summarizer/db/schema';
+import {NetworkQueueEntry} from '../../api/network-queue';
 
 export class InitialMigration extends Migration {
 
@@ -42,9 +41,12 @@ export class InitialMigration extends Migration {
             GroupEntry.getCreateEntry(),
             GroupProfileEntry.getCreateEntry(),
             KeyValueStoreEntry.getCreateEntry(),
-            ContentMarkerEntry.getCreateEntry()
+            ContentMarkerEntry.getCreateEntry(),
+            ErrorStackEntry.getCreateEntry(),
+            SearchHistoryEntry.getCreateEntry(),
+            CourseAssessmentEntry.getCreateEntry(),
+            NetworkQueueEntry.getCreateEntry()
         ];
     }
-
 
 }

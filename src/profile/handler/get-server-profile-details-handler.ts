@@ -1,59 +1,56 @@
-import {ApiRequestHandler, ApiService, HttpRequestType, Request} from '../../api';
-import {ProfileServiceConfig, ServerProfile, ServerProfileDetailsRequest} from '..';
+import {ApiRequestHandler} from '../../api';
+import {ServerProfile, ServerProfileDetailsRequest} from '..';
 import {CachedItemRequest, CachedItemRequestSourceFrom, CachedItemStore, KeyValueStore} from '../../key-value-store';
-import {Observable} from 'rxjs';
+import {Observable, of} from 'rxjs';
+import {catchError, mergeMap, tap} from 'rxjs/operators';
+import {CsInjectionTokens} from '../../injection-tokens';
+import {CsUserService} from '@project-sunbird/client-services/services/user';
+import {Container} from 'inversify';
 
 export class GetServerProfileDetailsHandler implements ApiRequestHandler<{
     serverProfileDetailsRequest: ServerProfileDetailsRequest,
     cachedItemRequest: CachedItemRequest
 }, ServerProfile> {
 
-    private readonly GET_SERVER_PROFILE_DETAILS_ENDPOINT = '/read';
     private readonly USER_PROFILE_DETAILS_KEY_PREFIX = 'userProfileDetails';
 
     constructor(
-        private apiService: ApiService,
-        private profileServiceConfig: ProfileServiceConfig,
-        private cachedItemStore: CachedItemStore<ServerProfile>,
-        private keyValueStore: KeyValueStore) {
+        private cachedItemStore: CachedItemStore,
+        private keyValueStore: KeyValueStore,
+        private container: Container) {
     }
+
+  private get csUserService(): CsUserService {
+    return this.container.get(CsInjectionTokens.USER_SERVICE);
+  }
 
     handle(serverProfileDetailsRequest): Observable<ServerProfile> {
 
         serverProfileDetailsRequest.from = serverProfileDetailsRequest.from || CachedItemRequestSourceFrom.CACHE;
 
-        return Observable.of(serverProfileDetailsRequest.from)
-            .mergeMap((from: CachedItemRequestSourceFrom) => {
+        return of(serverProfileDetailsRequest.from).pipe(
+            mergeMap((from: CachedItemRequestSourceFrom) => {
                 if (from === CachedItemRequestSourceFrom.SERVER) {
-                    return this.fetchFromServer(serverProfileDetailsRequest)
-                        .do(async (profile) => {
+                    return this.fetchFromServer(serverProfileDetailsRequest).pipe(
+                        tap(async (profile) => {
                             return this.keyValueStore.setValue(
                                 this.USER_PROFILE_DETAILS_KEY_PREFIX + '-' + profile.id, JSON.stringify(profile)
                             ).toPromise();
-                        })
-                        .catch(() => {
+                        }),
+                        catchError(() => {
                             return this.fetchFromCache(serverProfileDetailsRequest);
-                        });
+                        })
+                    );
                 }
 
                 return this.fetchFromCache(serverProfileDetailsRequest);
-            });
+            })
+        );
     }
 
 
     private fetchFromServer(request: ServerProfileDetailsRequest): Observable<ServerProfile> {
-        const apiRequest: Request = new Request.Builder()
-            .withType(HttpRequestType.GET)
-            .withPath(this.profileServiceConfig.profileApiPath + this.GET_SERVER_PROFILE_DETAILS_ENDPOINT + '/' + request.userId)
-            .withParameters({'fields': request.requiredFields.join(',')})
-            .withApiToken(true)
-            .withSessionToken(true)
-            .withBody(request)
-            .build();
-
-        return this.apiService.fetch<{ result: { response: ServerProfile } }>(apiRequest).map((success) => {
-            return success.body.result.response;
-        });
+      return this.csUserService.getProfileDetails(request, { apiPath : '/api/user/v3'});
     }
 
     private fetchFromCache(request: ServerProfileDetailsRequest): Observable<ServerProfile> {

@@ -1,6 +1,7 @@
 import {ApiRequestHandler, ApiService, HttpRequestType, Request} from '../../api';
 import {Observable} from 'rxjs';
 import {Batch, CourseBatchDetailsRequest, CourseServiceConfig} from '..';
+import {map} from 'rxjs/operators';
 
 export class GetBatchDetailsHandler implements ApiRequestHandler<CourseBatchDetailsRequest, Batch> {
     public readonly GET_BATCH_DETAILS_ENDPOINT = '/batch/read/';
@@ -14,12 +15,15 @@ export class GetBatchDetailsHandler implements ApiRequestHandler<CourseBatchDeta
         const apiRequest: Request = new Request.Builder()
             .withType(HttpRequestType.GET)
             .withPath(this.courseServiceConfig.apiPath + this.GET_BATCH_DETAILS_ENDPOINT + request.batchId)
-            .withApiToken(true)
-            .withSessionToken(true)
+            .withBearerToken(true)
+            .withUserToken(true)
             .build();
 
-        return this.apiService.fetch<{ result: { response: Batch } }>(apiRequest).map((response) => {
-            return response.body.result.response;
-        });
+        return this.apiService.fetch<{ result: { response: Batch } }>(apiRequest)
+            .pipe(
+                map((response) => {
+                    return response.body.result.response;
+                })
+            );
     }
 }

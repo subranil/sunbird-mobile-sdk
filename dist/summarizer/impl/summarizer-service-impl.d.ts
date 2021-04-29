@@ -1,23 +1,26 @@
 import { ContentCache, LearnerAssessmentSummary, ReportDetailPerUser, SummarizerService, SummaryRequest } from '..';
-import { Observable } from 'rxjs';
 import { DbService } from '../../db';
 import { SunbirdTelemetry } from '../../telemetry';
 import { EventsBusService } from '../../events-bus';
-import { EventObserver } from '../../events-bus/def/event-observer';
 import { ContentService } from '../../content';
 import { TelemetryEvent } from '../../telemetry/def/telemetry-event';
-import Telemetry = SunbirdTelemetry.Telemetry;
 import { CourseService } from '../../course';
 import { SharedPreferences } from '../../util/shared-preferences';
+import { ProfileService } from '../../profile';
+import { EventObserver } from '../../events-bus/def/event-observer';
+import { Observable } from 'rxjs';
+import Telemetry = SunbirdTelemetry.Telemetry;
 export declare class SummarizerServiceImpl implements SummarizerService, EventObserver<TelemetryEvent> {
     private dbService;
     private contenService;
     private eventsBusService;
     private courseService;
     private sharedPreference;
+    private profileService;
     private contentMap;
     private summarizerTelemetryHandler;
-    constructor(dbService: DbService, contenService: ContentService, eventsBusService: EventsBusService, courseService: CourseService, sharedPreference: SharedPreferences);
+    constructor(dbService: DbService, contenService: ContentService, eventsBusService: EventsBusService, courseService: CourseService, sharedPreference: SharedPreferences, profileService: ProfileService);
+    onInit(): Observable<undefined>;
     getDetailsPerQuestion(request: SummaryRequest): Observable<{
         [p: string]: any;
     }[]>;

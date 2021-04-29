@@ -1,13 +1,21 @@
 import {ServerProfile} from './server-profile';
 
+export {
+    UserDeclaration, UserFeedEntry, UserFeedCategory, UserFeedStatus
+} from '@project-sunbird/client-services/models/user';
+
 export enum ProfileType {
-    STUDENT = 'STUDENT',
-    TEACHER = 'TEACHER'
+    STUDENT = 'student',
+    TEACHER = 'teacher',
+    ADMIN = 'administrator',
+    PARENT = 'parent',
+    OTHER = 'other',
+    NONE = 'none'
 }
 
 export enum ProfileSource {
-    SERVER = 'SERVER',
-    LOCAL = 'LOCAL'
+    SERVER = 'server',
+    LOCAL = 'local'
 }
 
 export interface Profile {

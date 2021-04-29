@@ -17,6 +17,7 @@ export declare class ReportSummary {
     hierarchyData: string;
     totalMaxScore: number;
     totalScore: number;
+    totalQuestionsScore: number;
 }
 export declare class Context {
     env: string;
@@ -25,6 +26,7 @@ export declare class Context {
     pdata: ProducerData;
     sid: string;
     did: string;
+    rollup: Rollup;
 }
 export declare class DeviceSpecification {
     os: string;
@@ -68,11 +70,6 @@ export declare class Visit {
     objver: string;
     section: string;
     index: number;
-}
-export declare class Interrupt {
-    env: string;
-    type: string;
-    pageId: string;
 }
 export declare class ProducerData {
     id: string;
@@ -131,7 +128,7 @@ export declare namespace SunbirdTelemetry {
     }
     class Start extends Telemetry {
         private static readonly EID;
-        constructor(type: string | undefined, dSpec: DeviceSpecification | undefined, loc: string | undefined, mode: string | undefined, duration: number | undefined, pageId: string | undefined, env: string, objId?: string, objType?: string, objVer?: string, rollup?: Rollup, correlationData?: Array<CorrelationData>);
+        constructor(type: string | undefined, dspec: DeviceSpecification | undefined, loc: string | undefined, mode: string | undefined, duration: number | undefined, pageid: string | undefined, env: string, objId?: string, objType?: string, objVer?: string, rollup?: Rollup, correlationData?: Array<CorrelationData>);
     }
     class Interact extends Telemetry {
         private static readonly EID;
@@ -153,20 +150,24 @@ export declare namespace SunbirdTelemetry {
         private static readonly EID;
         constructor(errorCode: string | undefined, errorType: string | undefined, stacktrace: string | undefined, pageid: string | undefined);
     }
+    class Interrupt extends Telemetry {
+        private static readonly EID;
+        constructor(type: string, pageid: string | undefined);
+    }
     class Share extends Telemetry {
         private static readonly EID;
         constructor(dir: string | undefined, type: string | undefined, items: Array<{
             [index: string]: any;
-        }> | undefined);
-        addItem(type: ShareItemType, origin: string, identifier: string, pkgVersion: number, transferCount: number, size: string): void;
+        }> | undefined, correlationData?: Array<CorrelationData>, objId?: string, objType?: string, objVer?: string, rollUp?: Rollup);
+        addItem(type: ShareItemType | string, origin: string, identifier: string, pkgVersion: number, transferCount: number, size: string): void;
         capitalize(input: any): string;
     }
     class Feedback extends Telemetry {
         private static readonly EID;
-        constructor(rating: number | undefined, comments: string | undefined, env: string, objId?: string, objType?: string, objVer?: string);
+        constructor(rating: number | undefined, comments: string | undefined, env: string, objId: string | undefined, objType: string | undefined, objVer: string | undefined, commentid: string | undefined, commenttxt: string | undefined);
     }
     class Audit extends Telemetry {
         private static readonly EID;
-        constructor(env: string, actor: Actor, currentState: AuditState, updatedProperties: string[] | undefined, objId?: string, objType?: string, objVer?: string);
+        constructor(env: string, actor: Actor, currentState: AuditState, updatedProperties: string[] | undefined, objId?: string, objType?: string, objVer?: string, correlationData?: Array<CorrelationData>);
     }
 }

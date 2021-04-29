@@ -16,10 +16,12 @@
     "preserveSymlinks": true,
     "lib": [
       "dom",
+      "es6",
       "es2015"
     ],
     "types": [
-      "jest",
+      "node-fetch",
+      "reflect-metadata",
       "websql"
     ],
     "moduleResolution": "node"
@@ -30,6 +32,9 @@
   ],
   "exclude": [
     "node_modules",
+    "src/**/*.spec.ts",
+    "src/**/*.spec.data.ts",
+    "src/**/__tests__/*.ts",
     "dist",
     "tmp"
   ],

@@ -11,10 +11,13 @@ import {
     GetFrameworkCategoryTermsRequest
 } from '..';
 import {Observable} from 'rxjs';
-import * as Collections from 'typescript-collections';
+import Set from 'typescript-collections/dist/lib/Set';
+import {makeString} from 'typescript-collections/dist/lib/util';
 import {FrameworkMapper} from '../util/framework-mapper';
 import {SharedPreferences} from '../../util/shared-preferences';
 import {FrameworkKeys} from '../../preference-keys';
+import {map, mergeMap, tap} from 'rxjs/operators';
+import {CachedItemRequestSourceFrom} from '../../key-value-store';
 
 export class GetFrameworkCategoryTermsHandler implements ApiRequestHandler<GetFrameworkCategoryTermsRequest, CategoryTerm[]> {
 
@@ -29,12 +32,14 @@ export class GetFrameworkCategoryTermsHandler implements ApiRequestHandler<GetFr
                 return this.getTranslatedFrameworkDetails(request.frameworkId, request.requiredCategories, request.language);
             }
 
-            return this.getActiveChannelTranslatedDefaultFrameworkDetails(request.requiredCategories, request.language);
-        }) as () => Observable<Framework>)()
-            .do(async (framework: Framework) =>
-                await this.sharedPreferences.putString(FrameworkKeys.KEY_ACTIVE_CHANNEL_ACTIVE_FRAMEWORK_ID, framework.identifier).toPromise()
-            )
-            .map((framework: Framework) => {
+            return this.getActiveChannelTranslatedDefaultFrameworkDetails(request);
+        }) as () => Observable<Framework>)().pipe(
+            tap(async (framework: Framework) =>
+                await this.sharedPreferences.putString(
+                    FrameworkKeys.KEY_ACTIVE_CHANNEL_ACTIVE_FRAMEWORK_ID, framework.identifier
+                ).toPromise()
+            ),
+            map((framework: Framework) => {
                 let terms: CategoryTerm[] = [];
 
                 if (!request.prevCategoryCode && request.currentCategoryCode) {
@@ -42,37 +47,54 @@ export class GetFrameworkCategoryTermsHandler implements ApiRequestHandler<GetFr
                 } else {
                     terms = this.getCategoryAssociationTerms(framework, request).toArray();
                 }
+                if (request.currentCategoryCode === 'gradeLevel') {
+                    const maxIndex: number = terms.reduce((acc, val) => (val.index && (val.index > acc)) ? val.index : acc, 0);
 
-                terms.sort((prevTerm: CategoryTerm, term: CategoryTerm) => prevTerm.index - term.index);
-
+                    terms.sort((i, j) => (i.index || maxIndex + 1) - (j.index || maxIndex + 1));
+                } else {
+                    terms.sort((i, j) => i.name.localeCompare(j.name));
+                }
+                const othersOptionIndex = terms.indexOf(terms.find(val => val.name === 'Others')!);
+                if ( othersOptionIndex >= 0 && othersOptionIndex !== terms.length) {
+                       const temp = terms[terms.length - 1];
+                       terms[terms.length - 1] = terms[othersOptionIndex];
+                       terms[othersOptionIndex] = temp;
+                }
                 return terms;
-            });
+            })
+        );
     }
 
     private getActiveChannelTranslatedDefaultFrameworkDetails(
-        requiredCategories: FrameworkCategoryCode[],
-        language: string
+        request: GetFrameworkCategoryTermsRequest
     ): Observable<Framework> {
-        return this.frameworkUtilService.getActiveChannel()
-            .mergeMap((channel: Channel) => {
-                return this.getTranslatedFrameworkDetails(channel.defaultFramework, requiredCategories, language);
-            });
+        return this.frameworkUtilService.getActiveChannel({ from: request.from }).pipe(
+            mergeMap((channel: Channel) => {
+                return this.getTranslatedFrameworkDetails(
+                    channel.defaultFramework, request.requiredCategories, request.language, request.from
+                );
+            })
+        );
     }
 
     private getTranslatedFrameworkDetails(
         frameworkId: string,
         requiredCategories: FrameworkCategoryCode[],
-        language: string
+        language: string,
+        from?: CachedItemRequestSourceFrom,
     ): Observable<Framework> {
         return this.frameworkService.getFrameworkDetails({
+            from,
             frameworkId,
             requiredCategories
-        }).map((f) => FrameworkMapper.prepareFrameworkTranslations(f, language));
+        }).pipe(
+            map((f) => FrameworkMapper.prepareFrameworkTranslations(f, language))
+        );
     }
 
-    private getAllCategoriesTermsSet(framework: Framework): Collections.Set<CategoryTerm> {
+    private getAllCategoriesTermsSet(framework: Framework): Set<CategoryTerm> {
         if (!framework.categories) {
-            return new Collections.Set<CategoryTerm>();
+            return new Set<CategoryTerm>();
         }
 
         return framework.categories
@@ -81,28 +103,27 @@ export class GetFrameworkCategoryTermsHandler implements ApiRequestHandler<GetFr
             .reduce((acc, val) => {
                     acc.add(val);
                     return acc;
-                }, new Collections.Set<CategoryTerm>((term) => Collections.util.makeString(term))
+                }, new Set<CategoryTerm>((term) => makeString(term))
             );
     }
 
-    private getCategoryTerms(framework: Framework, request: GetFrameworkCategoryTermsRequest): Collections.Set<CategoryTerm> {
+    private getCategoryTerms(framework: Framework, request: GetFrameworkCategoryTermsRequest): Set<CategoryTerm> {
         return framework.categories!.find((category) => category.code === request.currentCategoryCode)!.terms!
             .reduce((acc, val) => {
                     acc.add(val!);
                     return acc;
-                }, new Collections.Set<CategoryTerm>((term) => Collections.util.makeString(term))
+                }, new Set<CategoryTerm>((term) => makeString(term))
             );
     }
 
-    private getCategoryAssociationTerms(framework: Framework, request: GetFrameworkCategoryTermsRequest): Collections.Set<CategoryTerm> {
+    private getCategoryAssociationTerms(framework: Framework, request: GetFrameworkCategoryTermsRequest): Set<CategoryTerm> {
         if (!framework.categories) {
-            return new Collections.Set<CategoryTerm>();
+            return new Set<CategoryTerm>();
         }
 
         const categoryTerms = framework.categories.find((category) => category.code === request.prevCategoryCode)!.terms;
-
         if (!categoryTerms) {
-            return new Collections.Set<CategoryTerm>();
+            return new Set<CategoryTerm>();
         }
 
         const categoryAssociationsArray: CategoryAssociation[][] = categoryTerms
@@ -114,23 +135,26 @@ export class GetFrameworkCategoryTermsHandler implements ApiRequestHandler<GetFr
                 .reduce((acc, val) => {
                         acc.add(val!);
                         return acc;
-                    }, new Collections.Set<CategoryTerm>((term) => Collections.util.makeString(term))
+                    }, new Set<CategoryTerm>((term) => makeString(term))
                 );
         } else {
             return categoryAssociationsArray
-                .reduce((acc, val) => acc.concat(val))
+                .reduce((acc, val) => acc.concat(val), [])
                 .reduce((acc, val) => {
                         acc.add(val);
                         return acc;
-                    }, new Collections.Set<CategoryAssociation>((term) => Collections.util.makeString(term))
+                    }, new Set<CategoryAssociation>((term) => makeString(term))
                 )
                 .toArray()
                 .map((association: CategoryAssociation) =>
-                    this.getAllCategoriesTermsSet(framework).toArray().find((term) => term.code === association.code))
+                    this.getAllCategoriesTermsSet(framework).toArray().find((term) =>
+                        term.identifier === association.identifier
+                    )
+                )
                 .reduce((acc, val) => {
                         acc.add(val!);
                         return acc;
-                    }, new Collections.Set<CategoryTerm>((term) => Collections.util.makeString(term))
+                    }, new Set<CategoryTerm>((term) => makeString(term))
                 );
         }
     }

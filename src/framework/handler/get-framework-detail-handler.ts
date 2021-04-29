@@ -1,10 +1,11 @@
-import {CachedItemStore} from '../../key-value-store';
+import {CachedItemRequestSourceFrom, CachedItemStore} from '../../key-value-store';
 import {Path} from '../../util/file/util/path';
 import {FileService} from '../../util/file/def/file-service';
 import {ApiRequestHandler, ApiService, HttpRequestType, Request} from '../../api';
-import {Observable} from 'rxjs';
 import {Channel, Framework, FrameworkDetailsRequest, FrameworkService, FrameworkServiceConfig} from '..';
 import {FrameworkMapper} from '../util/framework-mapper';
+import {defer, from, iif, Observable} from 'rxjs';
+import {map, mergeMap} from 'rxjs/operators';
 
 
 export class GetFrameworkDetailsHandler implements ApiRequestHandler<FrameworkDetailsRequest, Framework> {
@@ -16,29 +17,31 @@ export class GetFrameworkDetailsHandler implements ApiRequestHandler<FrameworkDe
     constructor(private frameworkService: FrameworkService,
                 private apiService: ApiService,
                 private frameworkServiceConfig: FrameworkServiceConfig,
-                private fileservice: FileService,
-                private cachedItemStore: CachedItemStore<Framework>) {
+                private fileService: FileService,
+                private cachedItemStore: CachedItemStore) {
     }
 
     handle(request: FrameworkDetailsRequest): Observable<Framework> {
-        return Observable.if(
+        return iif(
             () => !!request.frameworkId,
-            Observable.defer(() => {
-                return this.cachedItemStore.getCached(
+            defer(() => {
+                return this.cachedItemStore[request.from === CachedItemRequestSourceFrom.SERVER ? 'get' : 'getCached'](
                     request.frameworkId!,
                     this.FRAMEWORK_LOCAL_KEY,
                     'ttl_' + this.FRAMEWORK_LOCAL_KEY,
                     () => this.fetchFromServer(request),
                     () => this.fetchFromFile(request));
             }),
-            Observable.defer(() => {
-                return this.frameworkService.getDefaultChannelDetails()
-                    .mergeMap((channel: Channel) =>
+            defer(() => {
+                return this.frameworkService.getDefaultChannelDetails().pipe(
+                    mergeMap((channel: Channel) =>
                         this.frameworkService.getFrameworkDetails({
+                            from: request.from,
                             frameworkId: channel.defaultFramework,
                             requiredCategories: request.requiredCategories
                         })
-                    );
+                    )
+                );
             })
         );
     }
@@ -48,30 +51,32 @@ export class GetFrameworkDetailsHandler implements ApiRequestHandler<FrameworkDe
             .withType(HttpRequestType.GET)
             .withPath(this.frameworkServiceConfig.frameworkApiPath + this.GET_FRAMEWORK_DETAILS_ENDPOINT + '/' + request.frameworkId)
             .withParameters({categories: request.requiredCategories.join(',')})
-            .withApiToken(true)
+            .withBearerToken(true)
             .build();
 
-        return this.apiService.fetch<{ result: { framework: Framework } }>(apiRequest)
-            .map((response) => {
+        return this.apiService.fetch<{ result: { framework: Framework } }>(apiRequest).pipe(
+            map((response) => {
                 return response.body.result.framework;
-            })
-            .map((framework: Framework) => {
+            }),
+            map((framework: Framework) => {
                 return FrameworkMapper.prepareFrameworkCategoryAssociations(framework);
-            });
+            })
+        );
     }
 
     private fetchFromFile(request: FrameworkDetailsRequest): Observable<Framework> {
         const dir = Path.ASSETS_PATH + this.frameworkServiceConfig.frameworkConfigDirPath;
         const file = this.FRAMEWORK_FILE_KEY_PREFIX + request.frameworkId + '.json';
 
-        return Observable.fromPromise(this.fileservice.readAsText(dir, file))
-            .map((filecontent: string) => {
+        return from(this.fileService.readFileFromAssets(dir.concat('/', file))).pipe(
+            map((filecontent: string) => {
                 const result = JSON.parse(filecontent);
                 return result.result.framework;
-            })
-            .map((framework: Framework) => {
+            }),
+            map((framework: Framework) => {
                 return FrameworkMapper.prepareFrameworkCategoryAssociations(framework);
-            });
+            })
+        );
     }
 
 }

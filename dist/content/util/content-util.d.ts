@@ -3,8 +3,8 @@ import { Rollup } from '../../telemetry';
 import { AppConfig } from '../../api/config/app-config';
 import { ContentEntry } from '../db/schema';
 export declare class ContentUtil {
-    private static DEFAULT_PACKAGE_VERSION;
     static defaultCompatibilityLevel: number;
+    private static DEFAULT_PACKAGE_VERSION;
     private static INITIAL_VALUE_FOR_TRANSFER_COUNT;
     private static readonly MAX_CONTENT_NAME;
     static isAvailableLocally(contentState: number): boolean;
@@ -37,15 +37,14 @@ export declare class ContentUtil {
     /**
      * To Check whether the content is exist or not.
      *
-     * @param oldContent    Old ContentModel
+     * @param existingContentInDB    Old ContentModel
      * @param newIdentifier New content identifier
+     * @param newPkgVersion
+     * @param keepLowerVersion
      * @return True - if file exists, False- does not exists
      */
     static doesContentExist(existingContentInDB: ContentEntry.SchemaMap | undefined, newIdentifier: string, newPkgVersion: number, keepLowerVersion: boolean): boolean;
     static getContentRootDir(rootFilePath: string): string;
-    private static transferCount;
-    private static isContentMetadataAbsent;
-    private static isContentMetadataPresentWithoutViralityMetadata;
     static addOrUpdateViralityMetadata(localData: any, origin: string): void;
     static addViralityMetadataIfMissing(localData: any, origin: string): void;
     /**
@@ -59,7 +58,7 @@ export declare class ContentUtil {
     static isOnlineContent(contentData: any): boolean;
     static addOrUpdateDialcodeMapping(jsonStr: string, identifier: string, rootNodeIdentifier: string): string;
     static deDupe<T>(array: T[], property: any): T[];
-    static getExportedFileName(contentsInDb: ContentEntry.SchemaMap[]): string;
+    static getExportedFileName(contentsInDb: ContentEntry.SchemaMap[], appName: string): string;
     static readOriginFromContentMap(item: any): string;
     static readTransferCountFromContentMap(item: any): number;
     static readSizeFromContentMap(item: any): string;
@@ -67,4 +66,25 @@ export declare class ContentUtil {
     static getBasePath(basePath: string): string;
     static getRollup(identifier: string, hierachyInfo: HierarchyInfo[]): Rollup;
     static addOrUpdateRefCount(refCount: number): number;
+    static isNotUnit(mimeType: any, visibility: any): boolean;
+    static getContentAttribute(data: any): string;
+    static getFindAllContentsWithIdentifierQuery(identifiers: string[]): string;
+    static getFindAllContentsQuery(): string;
+    static constructContentDBModel(identifier: any, manifestVersion: any, localData: any, mimeType: any, contentType: any, visibility: any, path: any, refCount: any, contentState: any, audience: any, pragma: any, sizeOnDevice: any, board: any, medium: any, grade: any): ContentEntry.SchemaMap;
+    static getReferenceCount(existingContent: any, visibility: string): number;
+    /**
+     * add or update the reference count for the content
+     *
+     */
+    static getContentVisibility(existingContentInDb: any, objectType: any, previuosVisibility: string): string;
+    /**
+     * Add or update the content_state. contentState should not update the spine_only when importing the spine content
+     * after importing content with artifacts.
+     *
+     */
+    static getContentState(existingContentInDb: any, contentState: number): number;
+    static isFreeSpaceAvailable(deviceAvailableFreeSpace: number, fileSpace: number, bufferSize: number): boolean;
+    private static transferCount;
+    private static isContentMetadataAbsent;
+    private static isContentMetadataPresentWithoutViralityMetadata;
 }

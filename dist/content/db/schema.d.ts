@@ -18,6 +18,9 @@ export declare namespace ContentEntry {
     const COLUMN_NAME_PRAGMA = "pragma";
     const COLUMN_NAME_UID = "uid";
     const COLUMN_NAME_SIZE_ON_DEVICE = "size_on_device";
+    const COLUMN_NAME_BOARD = "board";
+    const COLUMN_NAME_MEDIUM = "medium";
+    const COLUMN_NAME_GRADE = "grade";
     interface SchemaMap {
         [COLUMN_NAME_IDENTIFIER]: string;
         [COLUMN_NAME_SERVER_DATA]: string;
@@ -35,11 +38,17 @@ export declare namespace ContentEntry {
         [COLUMN_NAME_AUDIENCE]?: string;
         [COLUMN_NAME_PRAGMA]?: string;
         [COLUMN_NAME_SIZE_ON_DEVICE]?: number;
+        [COLUMN_NAME_BOARD]?: string;
+        [COLUMN_NAME_MEDIUM]?: string;
+        [COLUMN_NAME_GRADE]?: string;
     }
     const getCreateEntry: (() => string);
     const getDeleteEntry: (() => string);
     const getAlterEntryForContentSize: (() => string);
     const getAlterEntryForPragma: (() => string);
+    const getAlterEntryForBoard: (() => string);
+    const getAlterEntryForMedium: (() => string);
+    const getAlterEntryForGrade: (() => string);
 }
 export declare namespace ContentAccessEntry {
     const _ID = "_id";
@@ -88,6 +97,7 @@ export declare namespace ContentMarkerEntry {
     const COLUMN_NAME_DATA = "data";
     const COLUMN_NAME_EXTRA_INFO = "extra_info";
     const COLUMN_NAME_MARKER = "marker";
+    const COLUMN_NAME_MIME_TYPE = "mime_type";
     interface SchemaMap {
         [COLUMN_NAME_UID]: string;
         [COLUMN_NAME_CONTENT_IDENTIFIER]: string;
@@ -95,7 +105,9 @@ export declare namespace ContentMarkerEntry {
         [COLUMN_NAME_DATA]: string;
         [COLUMN_NAME_EXTRA_INFO]: string;
         [COLUMN_NAME_MARKER]: number;
+        [COLUMN_NAME_MIME_TYPE]: string;
     }
     const getCreateEntry: (() => string);
     const deleteTable: (() => string);
+    const getAlterEntryForMimeType: (() => string);
 }

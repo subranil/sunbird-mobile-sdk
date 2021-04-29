@@ -1,10 +1,12 @@
 import { FileService } from '../def/file-service';
-import { DirectoryEntry, Entry, FileEntry, Flags, Metadata, RemoveResult, IWriteOptions } from '../index';
+import { DirectoryEntry, Entry, FileEntry, Flags, IWriteOptions, Metadata, RemoveResult } from '../index';
 export declare class FileServiceImpl implements FileService {
     private fileSystem;
     private initialized;
     init(): void;
     readAsText(path: string, filePath: string): Promise<string>;
+    readAsBinaryString(path: string, filePath: string): Promise<string>;
+    readFileFromAssets(fileName: string): Promise<string>;
     writeFile(path: string, fileName: string, text: string, options?: IWriteOptions): Promise<any>;
     /**
      * Creates a new file in the specific path.
@@ -22,7 +24,6 @@ export declare class FileServiceImpl implements FileService {
      * Removes a file from a desired location.
      *
      * @param {string} path  Base FileSystem. Please refer to the iOS and Android filesystem above
-     * @param {string} fileName Name of file to remove
      * @returns {Promise<RemoveResult>} Returns a Promise that resolves to a RemoveResult or rejects with an error.
      */
     removeFile(path: string): Promise<RemoveResult>;
@@ -39,7 +40,6 @@ export declare class FileServiceImpl implements FileService {
      * Removes all files and the directory from a desired location.
      *
      * @param {string} path Base FileSystem. Please refer to the iOS and Android filesystem above
-     * @param {string} dirName Name of directory
      * @returns {Promise<RemoveResult>} Returns a Promise that resolves with a RemoveResult or rejects with an error.
      */
     removeRecursively(path: string): Promise<RemoveResult>;
@@ -66,9 +66,6 @@ export declare class FileServiceImpl implements FileService {
     exists(path: string): Promise<Entry>;
     getTempLocation(destinationPath: string): Promise<DirectoryEntry>;
     getFreeDiskSpace(): Promise<number>;
-    private readEntries;
-    private readFile;
-    private resolveDirectoryUrl;
     /**
      * Resolves a local file system URL
      * @param fileUrl {string} file system url
@@ -76,6 +73,12 @@ export declare class FileServiceImpl implements FileService {
      */
     resolveLocalFilesystemUrl(fileUrl: string): Promise<Entry>;
     getMetaData(path: string | Entry): Promise<Metadata>;
+    getExternalApplicationStorageDirectory(): string;
+    getDirectorySize(path: string): Promise<number>;
+    size(entry: Entry): Promise<number>;
+    private readEntries;
+    private readFile;
+    private resolveDirectoryUrl;
     private remove;
     private copy;
     private getDirectory;
@@ -92,7 +95,4 @@ export declare class FileServiceImpl implements FileService {
      */
     private writeFileEntry;
     private write;
-    getExternalApplicationStorageDirectory(): string;
-    getDirectorySize(path: string): Promise<number>;
-    size(entry: Entry): Promise<number>;
 }

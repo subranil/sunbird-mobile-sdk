@@ -2,10 +2,10 @@ import {Observable} from 'rxjs';
 import {LearnerAssessmentSummary, ReportDetailPerUser} from './response';
 import {SummaryRequest} from './request';
 import {SunbirdTelemetry} from '../../telemetry';
+import {SdkServiceOnInitDelegate} from '../../sdk-service-on-init-delegate';
 import Telemetry = SunbirdTelemetry.Telemetry;
 
-
-export interface SummarizerService {
+export interface SummarizerService extends SdkServiceOnInitDelegate {
     getSummary(request: SummaryRequest): Observable<LearnerAssessmentSummary[]>;
 
     getLearnerAssessmentDetails(request: SummaryRequest): Observable<Map<string, ReportDetailPerUser>>;
@@ -21,6 +21,8 @@ export interface SummarizerService {
     getDetailsPerQuestion(request: SummaryRequest): Observable<{ [key: string]: any }[]>;
 
     deletePreviousAssessmentDetails(uid: string, contentId: string): Observable<undefined>;
+
+    // getContentCache(uids: string[]): Observable<Map<string, ContentCache>>;
 }
 
 

@@ -1,8 +1,8 @@
 import {ApiRequestHandler, ApiService, HttpRequestType, Request} from '../../api';
-import {IsProfileAlreadyInUseRequest} from '..';
+import {IsProfileAlreadyInUseRequest, ProfileServiceConfig} from '..';
 import {ProfileExistsResponse} from '../def/profile-exists-response';
-import {ProfileServiceConfig} from '..';
 import {Observable} from 'rxjs';
+import {map} from 'rxjs/operators';
 
 export class IsProfileAlreadyInUseHandler implements ApiRequestHandler<IsProfileAlreadyInUseRequest, ProfileExistsResponse> {
     private readonly GET_PROFILE_ALREADY_IN_USE_ENDPOINT = '/get';
@@ -16,13 +16,15 @@ export class IsProfileAlreadyInUseHandler implements ApiRequestHandler<IsProfile
             .withType(HttpRequestType.GET)
             .withPath(this.profileAlreadyInUseConfig.profileApiPath +
                 this.GET_PROFILE_ALREADY_IN_USE_ENDPOINT + '/' + request.type + '/' + request.key)
-            .withApiToken(true)
-            .withSessionToken(true)
+            .withBearerToken(true)
+            .withUserToken(true)
             .build();
 
-        return this.apiService.fetch<{ result: ProfileExistsResponse }>(apiRequest).map((success) => {
-            return success.body.result;
-        });
+        return this.apiService.fetch<{ result: ProfileExistsResponse }>(apiRequest).pipe(
+            map((success) => {
+                return success.body.result;
+            })
+        );
     }
 
 }
