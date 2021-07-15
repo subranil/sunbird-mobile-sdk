@@ -97,6 +97,12 @@ export interface DataSourceModelMap {
             aggregate?: AggregationConfig
         }[]
     };
+    'CONTENT_DISCOVERY_BANNER': {
+        type: 'CONTENT_DISCOVERY_BANNER',
+        tag?: string,
+        values?: DataResponseMap['CONTENT_DISCOVERY_BANNER']
+        mapping: {}[]
+    };
 }
 
 export interface DataResponseMap {
@@ -110,6 +116,19 @@ export interface DataResponseMap {
     }[];
     'RECENTLY_VIEWED_CONTENTS': ContentsGroupedByPageSection;
     'CONTENTS': ContentsGroupedByPageSection;
+    'CONTENT_DISCOVERY_BANNER': {
+        code: string;
+        ui: {
+            background: string;
+            text: string;
+        };
+        action: {
+            type: string;
+            subType: string;
+            params: any;
+        };
+        expiry: string;
+    }[];
 }
 
 export type DataSourceType = keyof DataSourceModelMap;
@@ -122,6 +141,7 @@ export interface AggregatorConfigField<T extends DataSourceType = any> {
         description?: string;
         title: string;
         theme: any;
+        isEnabled: boolean
     }[];
 }
 
@@ -201,6 +221,8 @@ export class ContentAggregator {
                         return await this.buildContentSearchTask(field, request);
                     case 'TRACKABLE_COLLECTIONS':
                         return await this.buildTrackableCollectionsTask(field, request);
+                    case 'CONTENT_DISCOVERY_BANNER':
+                        return await this.buildContentDiscoveryBannerTask(field);
                     default: {
                         console.error('UNKNOWN_DATA_SRC');
                         return { requestHash: '', task: of([]) };
@@ -287,7 +309,29 @@ export class ContentAggregator {
                         dataSrc: field.dataSrc,
                         theme: section.theme,
                         description: section.description,
+                        isEnabled: section.isEnabled
                     } as ContentAggregation<'RECENTLY_VIEWED_CONTENTS'>;
+                });
+            })
+        };
+    }
+
+    private async buildContentDiscoveryBannerTask(
+      field: AggregatorConfigField<'CONTENT_DISCOVERY_BANNER'>,
+    ): Promise<AggregationTask<'CONTENT_DISCOVERY_BANNER'>> {
+        return {
+            requestHash: 'CONTENT_DISCOVERY_BANNER' + ContentAggregator.buildRequestHash(field.dataSrc.type),
+            task: defer(async () => {
+                return field.sections.map((section) => {
+                    return {
+                        index: section.index,
+                        title: section.title,
+                        data: field.dataSrc.values!.filter((value) => Number(value.expiry) > Math.floor(Date.now() / 1000)),
+                        dataSrc: field.dataSrc,
+                        theme: section.theme,
+                        description: section.description,
+                        isEnabled: section.isEnabled
+                    } as ContentAggregation<'CONTENT_DISCOVERY_BANNER'>;
                 });
             })
         };
@@ -310,6 +354,7 @@ export class ContentAggregator {
                             dataSrc: field.dataSrc,
                             theme: section.theme,
                             description: section.description,
+                            isEnabled: section.isEnabled
                         };
                     });
                 })
@@ -393,6 +438,7 @@ export class ContentAggregator {
                             dataSrc: field.dataSrc,
                             theme: section.theme,
                             description: section.description,
+                            isEnabled: section.isEnabled
                         };
                     } else {
                         return {
@@ -403,6 +449,7 @@ export class ContentAggregator {
                             dataSrc: field.dataSrc,
                             theme: section.theme,
                             description: section.description,
+                            isEnabled: section.isEnabled
                         };
                     }
                 });
@@ -458,6 +505,7 @@ export class ContentAggregator {
                             dataSrc: field.dataSrc,
                             theme: section.theme,
                             description: section.description,
+                            isEnabled: section.isEnabled
                         };
                     } else {
                         const aggregate = field.dataSrc.mapping[index].aggregate!;
@@ -476,6 +524,7 @@ export class ContentAggregator {
                             dataSrc: field.dataSrc,
                             theme: section.theme,
                             description: section.description,
+                            isEnabled: section.isEnabled
                         } as ContentAggregation<'TRACKABLE_COLLECTIONS'>;
                     }
                 });
@@ -494,7 +543,10 @@ export class ContentAggregator {
             task: defer(async () => {
                 const offlineSearchContentDataList: ContentData[] = await (/* fetch offline contents */ async () => {
                     return this.contentService.getContents({
-                        primaryCategories: searchCriteria.primaryCategories || [],
+                        primaryCategories:
+                            (searchCriteria.primaryCategories && searchCriteria.primaryCategories.length && searchCriteria.primaryCategories) ||
+                            (searchRequest.filters && searchRequest.filters.primaryCategory) ||
+                            [],
                         board: searchCriteria.board,
                         medium: searchCriteria.medium,
                         grade: searchCriteria.grade
@@ -543,18 +595,12 @@ export class ContentAggregator {
                             dataSrc: field.dataSrc,
                             theme: section.theme,
                             description: section.description,
+                            isEnabled: section.isEnabled
                         } as ContentAggregation<'CONTENTS'>;
                     } else {
                         const aggregate = field.dataSrc.mapping[index].aggregate!;
-                        return {
-                            index: section.index,
-                            title: section.title,
-                            meta: {
-                                searchCriteria,
-                                filterCriteria: onlineContentsResponse.filterCriteria,
-                                searchRequest
-                            },
-                            data: CsContentsGroupGenerator.generate({
+                        const data = (() => {
+                            const d = CsContentsGroupGenerator.generate({
                                 contents: combinedContents,
                                 groupBy: aggregate.groupBy!,
                                 sortBy: aggregate.sortBy ? this.buildSortByCriteria(aggregate.sortBy) : [],
@@ -564,10 +610,37 @@ export class ContentAggregator {
                                 combination: field.dataSrc.mapping[index].applyFirstAvailableCombination &&
                                     request.applyFirstAvailableCombination as any,
                                 includeSearchable: false
-                            }),
+                            });
+                            if (request.userPreferences && request.userPreferences[aggregate.groupBy!]) {
+                                d.sections.sort((a, b) => {
+                                    if (
+                                        request.userPreferences![aggregate.groupBy!]!.indexOf(a.name!.toLocaleLowerCase()!) > -1 &&
+                                        request.userPreferences![aggregate.groupBy!]!.indexOf(b.name!.toLocaleLowerCase()) > -1
+                                    ) { return a.name!.localeCompare(b.name!); }
+                                    if (request.userPreferences![aggregate.groupBy!]!.indexOf(a.name!.toLocaleLowerCase()) > -1) {
+                                         return -1;
+                                        }
+                                    if (request.userPreferences![aggregate.groupBy!]!.indexOf(b.name!.toLocaleLowerCase()) > -1) {
+                                         return 1;
+                                        }
+                                    return 0;
+                                });
+                            }
+                            return d;
+                        })();
+                        return {
+                            index: section.index,
+                            title: section.title,
+                            meta: {
+                                searchCriteria,
+                                filterCriteria: onlineContentsResponse.filterCriteria,
+                                searchRequest
+                            },
+                            data,
                             dataSrc: field.dataSrc,
                             theme: section.theme,
                             description: section.description,
+                            isEnabled: section.isEnabled
                         } as ContentAggregation<'CONTENTS'>;
                     }
                 });
